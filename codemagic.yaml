@@ -2,7 +2,36 @@
 # Pasos para configurarlo la primera vez: ver "Probar en iPhone" en el README.
 
 workflows:
-  # iPhone: firma, compila y envía a TestFlight para instalar en el teléfono.
+  # iPhone sin cuenta de desarrollador: .ipa SIN firmar para instalar con
+  # Sideloadly (que la firma con el Apple ID de quien la instala).
+  ios-sideloadly:
+    name: iOS · IPA para Sideloadly
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Dependencias
+        script: flutter pub get
+      - name: Análisis y pruebas
+        script: |
+          flutter analyze
+          flutter test
+      - name: Compilar sin firmar
+        script: flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER
+      - name: Empaquetar el .ipa
+        # Un .ipa es un zip con la app dentro de una carpeta Payload/.
+        script: |
+          rm -rf build/ipa-sideloadly && mkdir -p build/ipa-sideloadly/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa-sideloadly/Payload/
+          cd build/ipa-sideloadly && zip -qry ../CafeQuindio-sin-firmar.ipa Payload
+    artifacts:
+      - build/CafeQuindio-sin-firmar.ipa
+
+  # iPhone con cuenta de Apple Developer: firma, compila y envía a TestFlight.
+  # Requiere el certificado y el perfil App Store (ver README).
   ios-testflight:
     name: iOS · TestFlight
     max_build_duration: 60

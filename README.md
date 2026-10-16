@@ -39,11 +39,25 @@ flutter analyze
 flutter test
 ```
 
-## Probar en iPhone (Codemagic + TestFlight)
+## Probar en iPhone sin publicar (Codemagic + Sideloadly)
 
-`codemagic.yaml` tiene dos flujos que se lanzan a mano desde Codemagic:
-**iOS · TestFlight** (compila, firma y sube a TestFlight) y **Android · APK de
-prueba**. La primera vez hay que preparar la cuenta de Apple:
+1. En Codemagic, agregar el repositorio `cq-mobile` (configuración por
+   `codemagic.yaml`) y lanzar el flujo **iOS · IPA para Sideloadly**. No necesita
+   cuenta de Apple Developer ni certificados.
+2. Descargar el artefacto `CafeQuindio-sin-firmar.ipa`.
+3. Abrir [Sideloadly](https://sideloadly.io) en el computador, conectar el iPhone
+   por cable, arrastrar el `.ipa`, poner un Apple ID y darle *Start*.
+4. En el iPhone: Ajustes → General → VPN y gestión de dispositivos → confiar en
+   el perfil de ese Apple ID. En iOS 16 o superior, activar también
+   Ajustes → Privacidad y seguridad → **Modo de desarrollador** (pide reiniciar).
+
+Con un Apple ID gratuito la app deja de abrir a los 7 días: se vuelve a pasar
+con Sideloadly (no se pierde nada del código).
+
+## Publicar en TestFlight (Codemagic)
+
+El flujo **iOS · TestFlight** compila, firma y sube a TestFlight. Requiere la
+cuenta de Apple Developer; la primera vez:
 
 1. **Apple Developer Program** activo (cuenta de empresa o personal).
 2. En [developer.apple.com](https://developer.apple.com/account/resources/identifiers)
