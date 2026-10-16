@@ -36,8 +36,10 @@ workflows:
             /usr/libexec/PlistBuddy -c "Add :GIDClientID string $GOOGLE_IOS_CLIENT_ID" ios/Runner/Info.plist
           fi
       - name: Compilar sin firmar
-        script: flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER \
-          --dart-define=GOOGLE_IOS_CLIENT_ID=${GOOGLE_IOS_CLIENT_ID:-} --dart-define=GOOGLE_SERVER_CLIENT_ID=${GOOGLE_SERVER_CLIENT_ID:-}
+        script: |
+          flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER \
+            --dart-define=GOOGLE_IOS_CLIENT_ID=${GOOGLE_IOS_CLIENT_ID:-} \
+            --dart-define=GOOGLE_SERVER_CLIENT_ID=${GOOGLE_SERVER_CLIENT_ID:-}
       - name: Empaquetar el .ipa
         # Un .ipa es un zip con la app dentro de una carpeta Payload/.
         script: |
