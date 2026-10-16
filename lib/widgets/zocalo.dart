@@ -93,7 +93,21 @@ extension FacadeToneColors on FacadeTone {
   bool get isDark => this == FacadeTone.verde || this == FacadeTone.ink;
   Color get onWall => isDark ? CQColors.white : CQColors.ink;
   String get logo => isDark ? 'assets/brand/logo-blanco.webp' : 'assets/brand/logo-teal.webp';
+
+  /// Logo para esta fachada: blanco sobre oscuras; teal oscurecido sobre
+  /// tintas claras (como `brightness(0.45)` en la web) para que se lea.
+  Widget logoImage({double height = 24}) {
+    final img = Image.asset(logo, height: height, semanticLabel: 'Café Quindío');
+    return isDark ? img : ColorFiltered(colorFilter: _darkenLogo, child: img);
+  }
 }
+
+const _darkenLogo = ColorFilter.matrix([
+  0.45, 0, 0, 0, 0, //
+  0, 0.45, 0, 0, 0, //
+  0, 0, 0.45, 0, 0, //
+  0, 0, 0, 1, 0, //
+]);
 
 /// Fachada: muro de color plano con una ilustración corporativa apoyada
 /// sobre el zócalo. Se usa en bienvenida, espera y confirmación.

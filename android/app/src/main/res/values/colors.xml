@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Verde de fachada: el mismo de la apertura animada, sin destello blanco al abrir. -->
+    <color name="launch_verde">#1D6B64</color>
+</resources>

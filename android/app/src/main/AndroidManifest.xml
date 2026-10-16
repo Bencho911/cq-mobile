@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="cafe_quindio"
+        android:label="Café Quindío"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

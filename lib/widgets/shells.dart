@@ -45,7 +45,7 @@ class AuthShell extends StatelessWidget {
                       ? null
                       : Pressable(onTap: onBack, semanticLabel: 'Volver', child: Icon(LucideIcons.chevronLeft, size: 26, color: tone.onWall)),
                 ),
-                Expanded(child: Center(child: Image.asset(tone.logo, height: 24, semanticLabel: 'Café Quindío'))),
+                Expanded(child: Center(child: tone.logoImage())),
                 const SizedBox(width: 44),
               ]),
             ),
@@ -74,7 +74,16 @@ class AuthShell extends StatelessWidget {
 /// Código de N dígitos con un solo campo real (se puede pegar el código y
 /// el teclado ofrece el del SMS); las casillas son solo visuales.
 class CodeInput extends StatefulWidget {
-  const CodeInput({super.key, required this.length, required this.value, required this.onChanged, this.secret = false, this.autofocus = true, this.label = 'Código'});
+  const CodeInput({
+    super.key,
+    required this.length,
+    required this.value,
+    required this.onChanged,
+    this.secret = false,
+    this.autofocus = true,
+    this.label = 'Código',
+    this.autofillHints = const [AutofillHints.oneTimeCode],
+  });
 
   final int length;
   final String value;
@@ -84,6 +93,9 @@ class CodeInput extends StatefulWidget {
   final bool secret;
   final bool autofocus;
   final String label;
+
+  /// `oneTimeCode` ofrece el código del SMS; para un PIN usa `password` o `newPassword`.
+  final Iterable<String> autofillHints;
 
   @override
   State<CodeInput> createState() => _CodeInputState();
@@ -153,7 +165,7 @@ class _CodeInputState extends State<CodeInput> {
               focusNode: _focus,
               autofocus: widget.autofocus,
               keyboardType: TextInputType.number,
-              autofillHints: const [AutofillHints.oneTimeCode],
+              autofillHints: widget.autofillHints,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(widget.length)],
               onChanged: widget.onChanged,
               showCursor: false,
@@ -249,7 +261,7 @@ class WaitScreen extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.fromLTRB(24, MediaQuery.paddingOf(context).top + 28, 24, 0),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Image.asset(tone.logo, height: 24, semanticLabel: 'Café Quindío'),
+                tone.logoImage(),
                 const SizedBox(height: 40),
                 Text(title, style: CQType.title(40, color: tone.onWall)),
                 if (description != null) ...[
