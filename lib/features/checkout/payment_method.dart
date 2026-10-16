@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../core/config.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
@@ -13,7 +14,10 @@ const _methods = [
   (
     id: 'wompi',
     label: 'Tarjeta débito o crédito',
-    description: 'Visa, Mastercard o Amex. Pago seguro con Wompi.',
+    // MOCK: sin backend no se abre Wompi ni se cobra.
+    description: AppConfig.useMocks
+        ? 'Visa, Mastercard o Amex con Wompi. Modo de prueba: no se hace ningún cobro.'
+        : 'Visa, Mastercard o Amex. Pago seguro con Wompi.',
     icon: LucideIcons.creditCard,
   ),
   (id: 'efectivo', label: 'Efectivo en tienda', description: 'Pagas al recoger tu pedido.', icon: LucideIcons.banknote),
@@ -26,7 +30,8 @@ class PaymentMethodScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final current = ref.watch(cartProvider.select((c) => c.paymentMethod));
+    // Sin elección, el pedido se paga en el kiosco: se muestra marcado.
+    final current = ref.watch(cartProvider.select((c) => c.paymentMethod)) ?? 'kiosco';
     void back() => context.canPop() ? context.pop() : context.go('/home');
 
     return Scaffold(

@@ -12,18 +12,18 @@ import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
 import '../../data/mock_data.dart';
-import '../../data/services.dart';
 import '../../state/cart.dart';
 import '../../state/customization.dart';
 import '../../state/loyalty.dart';
+import '../../state/orders.dart';
+import '../../state/preferences.dart';
 import '../../state/providers.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/shells.dart';
 import '../../widgets/stamp.dart';
 import 'common.dart';
+import 'discounts.dart';
 import 'time_picker.dart';
-
-const _paymentLabels = {'wompi': 'Tarjeta (Wompi)', 'efectivo': 'Efectivo en tienda', 'kiosco': 'Pago en kiosco'};
 
 /// "Mediano, + espresso extra".
 String _describe(CartItem item) => [
@@ -47,35 +47,39 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
   void _back() => context.canPop() ? context.pop() : context.go('/home');
 
-  Future<void> _pay(int earned) async {
+  Future<void> _pay() async {
     final cart = ref.read(cartProvider);
     if (cart.items.isEmpty || _submitting) return;
-    HapticFeedback.mediumImpact();
+    if (cart.deliveryType == DeliveryType.domicilio && cart.address.isEmpty) {
+      showToast(context, 'Falta la dirección de entrega.', detail: 'Escríbela para que sepamos a dónde llevar tu pedido.', error: true);
+      return;
+    }
+    if (ref.read(preferencesProvider).haptics) HapticFeedback.mediumImpact();
     setState(() => _submitting = true);
     try {
-      final service = ref.read(orderServiceProvider);
-      final order = await service.createOrder(
-        CreateOrderInput(
-          items: cart.toOrderLines(),
-          paymentMethod: cart.paymentMethod ?? 'kiosco',
-          storeId: cart.storeId,
-          deliveryType: cart.deliveryType.name,
-        ),
-      );
+      final discount = ref.read(checkoutDiscountProvider);
+      final (:order, :points) = await ref
+          .read(ordersProvider.notifier)
+          .placeOrder(store: ref.read(selectedStoreProvider), discount: discount.amount);
+
+      // El descuento se consume con el pedido.
+      if (discount.kind == DiscountKind.freeDrink) ref.read(loyaltyProvider.notifier).redeemFreeDrink();
+      if (discount.kind == DiscountKind.voucher && discount.amount > 0) ref.read(appliedVoucherProvider.notifier).clear();
+      ref.read(useFreeDrinkProvider.notifier).set(false);
+      ref.read(lastRewardProvider.notifier).set(order.id, points);
 
       // Con backend real y pasarela, abre el checkout de Wompi en el navegador.
       if (!AppConfig.useMocks && cart.paymentMethod == 'wompi') {
         // TODO: usar un deep link de la app como URL de retorno cuando exista.
-        final url = await service.createCheckoutUrl(order.id, '${AppConfig.apiOrigin}/order-success?order=${order.id}');
+        final url = await ref
+            .read(orderServiceProvider)
+            .createCheckoutUrl(order.id, '${AppConfig.apiOrigin}/order-success?order=${order.id}');
         if (url.isNotEmpty) await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       }
 
-      if (!mounted) return;
       ref.read(cartProvider.notifier).clear();
-      context.go(
-        '/order-success',
-        extra: OrderSuccessArgs(orderId: order.id, earned: earned),
-      );
+      if (!mounted) return;
+      context.go('/order-success', extra: OrderSuccessArgs(orderId: order.id, earned: points.earned));
     } catch (_) {
       if (mounted) {
         showToast(context, 'No se pudo crear el pedido', detail: 'Revisa tu conexión e intenta de nuevo.', error: true);
@@ -106,7 +110,11 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     }
 
     final account = ref.watch(loyaltyAccountProvider);
-    final earned = estimatePoints(cart.subtotal);
+    final freeDrinks = ref.watch(loyaltyProvider.select((b) => b.freeDrinks));
+    final discount = ref.watch(checkoutDiscountProvider);
+    final drinkPrice = cheapestDrink(cart);
+    final total = cart.subtotal - discount.amount;
+    final earned = estimatePoints(total);
     final reward = preview(account, earned);
     final prizeBird = reward.newBirds.lastOrNull;
     final summary = summarize(account);
@@ -221,6 +229,16 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   ),
                 ),
 
+                // Bebida gratis del álbum
+                if (freeDrinks > 0 && drinkPrice != null)
+                  _FreeDrinkOffer(
+                    freeDrinks: freeDrinks,
+                    price: drinkPrice,
+                    active: discount.kind == DiscountKind.freeDrink,
+                    hasVoucher: discount.kind == DiscountKind.voucher,
+                    onChanged: (v) => ref.read(useFreeDrinkProvider.notifier).set(v),
+                  ),
+
                 // Puntos que suma el pedido
                 if (earned > 0)
                   Padding(
@@ -274,22 +292,28 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       children: [
                         Text('Dirección de entrega', style: CQType.body(15, weight: FontWeight.w600)),
                         const SizedBox(height: 10),
-                        const CQTextField(
+                        CQTextField(
                           label: 'Dirección',
+                          initialValue: cart.address.line,
+                          onChanged: (v) => ref.read(cartProvider.notifier).setAddress(ref.read(cartProvider).address.copyWith(line: v)),
                           hint: 'Ej. Calle 12 #9-34',
                           textInputAction: TextInputAction.next,
                           autofillHints: [AutofillHints.streetAddressLine1],
                         ),
                         const SizedBox(height: 10),
-                        const CQTextField(
+                        CQTextField(
                           label: 'Apartamento o piso (opcional)',
+                          initialValue: cart.address.detail,
+                          onChanged: (v) => ref.read(cartProvider.notifier).setAddress(ref.read(cartProvider).address.copyWith(detail: v)),
                           hint: 'Ej. Apto 301',
                           textInputAction: TextInputAction.next,
                           autofillHints: [AutofillHints.streetAddressLine2],
                         ),
                         const SizedBox(height: 10),
-                        const CQTextField(
+                        CQTextField(
                           label: 'Referencias',
+                          initialValue: cart.address.notes,
+                          onChanged: (v) => ref.read(cartProvider.notifier).setAddress(ref.read(cartProvider).address.copyWith(notes: v)),
                           hint: 'Ej. Casa azul, portón blanco',
                           textInputAction: TextInputAction.done,
                         ),
@@ -315,11 +339,33 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         ),
                       ListRow(
                         label: 'Método de pago',
-                        value: cart.paymentMethod == null ? 'Elegir' : _paymentLabels[cart.paymentMethod] ?? cart.paymentMethod,
+                        value: paymentLabels[cart.paymentMethod ?? 'kiosco'] ?? cart.paymentMethod,
                         onTap: () => context.push('/payment-method'),
                       ),
+                      ListRow(
+                        label: 'Bonos y cupones',
+                        value: discount.voucher?.code ?? (discount.kind == DiscountKind.freeDrink ? 'Bebida gratis' : 'Agregar'),
+                        onTap: () => context.push('/vouchers'),
+                      ),
+                      if (discount.kind != DiscountKind.none) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: Row(
+                            children: [
+                              Expanded(child: Text('Subtotal', style: CQType.body(15, color: CQColors.muted))),
+                              Text(formatCOP(cart.subtotal), style: CQType.number(15, color: CQColors.muted)),
+                            ],
+                          ),
+                        ),
+                        _DiscountLine(
+                          discount: discount,
+                          onRemove: () => discount.kind == DiscountKind.freeDrink
+                              ? ref.read(useFreeDrinkProvider.notifier).set(false)
+                              : ref.read(appliedVoucherProvider.notifier).clear(),
+                        ),
+                      ],
                       Padding(
-                        padding: const EdgeInsets.only(top: 16),
+                        padding: EdgeInsets.only(top: discount.kind == DiscountKind.none ? 16 : 4),
                         child: Row(
                           children: [
                             Expanded(
@@ -334,7 +380,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                                 style: CQType.body(16),
                               ),
                             ),
-                            Text(formatCOP(cart.subtotal), style: CQType.number(20)),
+                            Text(formatCOP(total), style: CQType.number(20)),
                           ],
                         ),
                       ),
@@ -351,13 +397,112 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       bottomNavigationBar: BottomAction(
         child: CQButton(
           label: _submitting ? 'Enviando pedido…' : 'Pagar y pedir',
-          trailing: formatCOP(cart.subtotal),
+          trailing: formatCOP(total),
           loading: _submitting,
-          onPressed: () => _pay(earned),
+          onPressed: _pay,
         ),
       ),
     );
   }
+}
+
+/// Línea "Cupón CAFE15 −$ 3.000" con opción de quitarlo.
+class _DiscountLine extends StatelessWidget {
+  const _DiscountLine({required this.discount, required this.onRemove});
+  final CheckoutDiscount discount;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = discount.voucher;
+    final label = discount.kind == DiscountKind.freeDrink ? 'Bebida gratis' : 'Cupón ${v!.code}';
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: CQType.body(15, weight: FontWeight.w600)),
+              if (discount.missing > 0)
+                Text(
+                  'Te faltan ${formatCOP(discount.missing)} para usar este cupón.',
+                  style: CQType.body(13, color: CQColors.danger, height: 1.25),
+                ),
+            ],
+          ),
+        ),
+        if (discount.amount > 0) Text('−${formatCOP(discount.amount)}', style: CQType.number(15, color: CQColors.success)),
+        Pressable(
+          onTap: onRemove,
+          semanticLabel: 'Quitar ${label.toLowerCase()}',
+          scale: 0.9,
+          child: const SizedBox(width: 44, height: 44, child: Icon(LucideIcons.x, size: 16, color: CQColors.muted)),
+        ),
+      ],
+    );
+  }
+}
+
+/// "Usar mi bebida gratis": descuenta la bebida más barata del carrito.
+class _FreeDrinkOffer extends StatelessWidget {
+  const _FreeDrinkOffer({
+    required this.freeDrinks,
+    required this.price,
+    required this.active,
+    required this.hasVoucher,
+    required this.onChanged,
+  });
+
+  final int freeDrinks;
+  final int price;
+  final bool active;
+  final bool hasVoucher;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: CQColors.mostazaSoft, borderRadius: BorderRadius.circular(6)),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(padding: EdgeInsets.only(top: 2), child: Icon(LucideIcons.coffee, size: 22, color: CQColors.ink)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    freeDrinks == 1 ? 'Tienes una bebida gratis' : 'Tienes $freeDrinks bebidas gratis',
+                    style: CQType.body(15, weight: FontWeight.w700),
+                  ),
+                  Text(
+                    active
+                        ? 'Descontamos tu bebida más barata (${formatCOP(price)}).'
+                        : hasVoucher
+                        ? 'Un descuento por pedido: si la usas, quitamos el cupón.'
+                        : 'Cubre tu bebida más barata (${formatCOP(price)}). Un descuento por pedido.',
+                    style: CQType.body(13, color: CQColors.muted, height: 1.25),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        CQButton(
+          label: active ? 'No usarla esta vez' : 'Usar mi bebida gratis',
+          variant: active ? CQButtonVariant.secondary : CQButtonVariant.primary,
+          height: 44,
+          onPressed: () => onChanged(!active),
+        ),
+      ],
+    ),
+  );
 }
 
 class _CartLine extends StatelessWidget {

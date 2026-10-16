@@ -1,16 +1,61 @@
-/// Historial de pedidos del cliente. MOCK hasta que el backend lo exponga.
+/// Historial de pedidos del cliente. Se guarda en el teléfono (ver
+/// state/orders.dart) hasta que el backend exponga el historial.
 library;
+
+import '../core/format.dart';
 
 /// Estados como los muestra la app.
 enum PastOrderStatus { pendiente, preparando, listo, completada, cancelada }
 
+extension PastOrderStatusInfo on PastOrderStatus {
+  /// En curso: todavía no se ha recogido ni cancelado.
+  bool get isActive => this == PastOrderStatus.pendiente || this == PastOrderStatus.preparando || this == PastOrderStatus.listo;
+}
+
 class PastOrderItem {
-  const PastOrderItem({this.codProd, required this.name, this.size, required this.quantity, required this.unitPrice});
+  const PastOrderItem({
+    this.codProd,
+    required this.name,
+    this.size,
+    this.variant,
+    this.toppings = const [],
+    required this.quantity,
+    required this.unitPrice,
+    this.imageUrl,
+  });
+
   final int? codProd;
   final String name;
   final String? size;
+  final String? variant;
+
+  /// Ids de adiciones (customization.dart).
+  final List<String> toppings;
   final int quantity;
   final int unitPrice;
+  final String? imageUrl;
+
+  Map<String, dynamic> toJson() => {
+        'codProd': codProd,
+        'name': name,
+        'size': size,
+        'variant': variant,
+        'toppings': toppings,
+        'quantity': quantity,
+        'unitPrice': unitPrice,
+        'imageUrl': imageUrl,
+      };
+
+  factory PastOrderItem.fromJson(Map<String, dynamic> j) => PastOrderItem(
+        codProd: (j['codProd'] as num?)?.toInt(),
+        name: j['name'] as String,
+        size: j['size'] as String?,
+        variant: j['variant'] as String?,
+        toppings: ((j['toppings'] as List?) ?? const []).cast<String>(),
+        quantity: (j['quantity'] as num).toInt(),
+        unitPrice: (j['unitPrice'] as num).toInt(),
+        imageUrl: j['imageUrl'] as String?,
+      );
 }
 
 class PastOrder {
@@ -19,102 +64,121 @@ class PastOrder {
     required this.status,
     required this.items,
     required this.store,
-    required this.date,
+    required this.createdAt,
     required this.paymentMethod,
+    this.storeId,
     this.discount = 0,
     this.address,
     this.deliveryType,
+    this.pickupTime,
+    this.earnedPoints = 0,
+    this.rating,
+    this.review,
   });
 
   final int id;
   final PastOrderStatus status;
   final List<PastOrderItem> items;
+
+  /// Nombre de la tienda ("Café Quindío · Centro").
   final String store;
-  final String date;
+  final int? storeId;
+  final DateTime createdAt;
+
+  /// Texto del método de pago ("Tarjeta (Wompi)", "Efectivo en tienda"...).
   final String paymentMethod;
   final int discount;
 
-  /// Dirección de la tienda (solo la trae el recibo).
+  /// Dirección de la tienda o de entrega.
   final String? address;
 
   /// "Recoger en tienda" | "Domicilio".
   final String? deliveryType;
 
+  /// Hora elegida para recoger; `null` = lo antes posible.
+  final DateTime? pickupTime;
+
+  /// Puntos que sumó el pedido.
+  final int earnedPoints;
+
+  /// Calificación 1..5 y reseña, si el cliente calificó.
+  final int? rating;
+  final String? review;
+
   int get subtotal => items.fold(0, (s, i) => s + i.quantity * i.unitPrice);
   int get total => subtotal - discount;
+
+  /// "Hoy, 2:15 p. m." / "Ayer, 10:30 a. m." / "8 sep, 3:45 p. m.".
+  String get date => formatOrderDate(createdAt);
+
+  PastOrder copyWith({PastOrderStatus? status, int? rating, String? review}) => PastOrder(
+        id: id,
+        status: status ?? this.status,
+        items: items,
+        store: store,
+        storeId: storeId,
+        createdAt: createdAt,
+        paymentMethod: paymentMethod,
+        discount: discount,
+        address: address,
+        deliveryType: deliveryType,
+        pickupTime: pickupTime,
+        earnedPoints: earnedPoints,
+        rating: rating ?? this.rating,
+        review: review ?? this.review,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'status': status.name,
+        'items': items.map((e) => e.toJson()).toList(),
+        'store': store,
+        'storeId': storeId,
+        'createdAt': createdAt.toIso8601String(),
+        'paymentMethod': paymentMethod,
+        'discount': discount,
+        'address': address,
+        'deliveryType': deliveryType,
+        'pickupTime': pickupTime?.toIso8601String(),
+        'earnedPoints': earnedPoints,
+        'rating': rating,
+        'review': review,
+      };
+
+  factory PastOrder.fromJson(Map<String, dynamic> j) => PastOrder(
+        id: (j['id'] as num).toInt(),
+        status: PastOrderStatus.values.asNameMap()[j['status']] ?? PastOrderStatus.completada,
+        items: ((j['items'] as List?) ?? const []).map((e) => PastOrderItem.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
+        store: j['store'] as String? ?? '',
+        storeId: (j['storeId'] as num?)?.toInt(),
+        createdAt: DateTime.tryParse('${j['createdAt']}') ?? DateTime.now(),
+        paymentMethod: j['paymentMethod'] as String? ?? '',
+        discount: (j['discount'] as num?)?.toInt() ?? 0,
+        address: j['address'] as String?,
+        deliveryType: j['deliveryType'] as String?,
+        pickupTime: DateTime.tryParse('${j['pickupTime'] ?? ''}'),
+        earnedPoints: (j['earnedPoints'] as num?)?.toInt() ?? 0,
+        rating: (j['rating'] as num?)?.toInt(),
+        review: j['review'] as String?,
+      );
 }
 
-// MOCK: pedidos de ejemplo hasta que el backend exponga el historial del usuario.
-const mockActiveOrders = [
-  PastOrder(
-    id: 1238,
-    status: PastOrderStatus.preparando,
-    items: [
-      PastOrderItem(codProd: 3, name: 'Nitro Cold Brew', quantity: 1, unitPrice: 31000),
-      PastOrderItem(codProd: 5, name: 'Caramel Latte', quantity: 1, unitPrice: 33000),
-    ],
-    store: 'Café Quindío · Centro',
-    date: 'Hoy, 2:15 p. m.',
-    paymentMethod: 'Tarjeta (Wompi)',
-  ),
-];
+const _months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
-// MOCK
-const mockOrderHistory = [
-  PastOrder(
-    id: 1237,
-    status: PastOrderStatus.completada,
-    items: [
-      PastOrderItem(codProd: 1, name: 'Café con leche', quantity: 1, unitPrice: 25000),
-      PastOrderItem(codProd: 4, name: 'Caffè Mocha', quantity: 1, unitPrice: 29000),
-      PastOrderItem(name: 'Croissant', quantity: 1, unitPrice: 28000),
-    ],
-    store: 'Café Quindío · Norte',
-    date: 'Ayer, 10:30 a. m.',
-    paymentMethod: 'Efectivo en tienda',
-  ),
-  PastOrder(
-    id: 1236,
-    status: PastOrderStatus.completada,
-    items: [PastOrderItem(codProd: 2, name: 'Cocoa Caramel Latte', quantity: 1, unitPrice: 33000)],
-    store: 'Café Quindío · Centro',
-    date: '8 sep, 3:45 p. m.',
-    paymentMethod: 'Tarjeta (Wompi)',
-  ),
-  PastOrder(
-    id: 1235,
-    status: PastOrderStatus.completada,
-    items: [
-      PastOrderItem(codProd: 5, name: 'Caramel Latte', quantity: 1, unitPrice: 28000),
-      PastOrderItem(codProd: 3, name: 'Nitro Cold Brew', quantity: 1, unitPrice: 31000),
-    ],
-    store: 'Café Quindío · Aeropuerto',
-    date: '5 sep, 9:00 a. m.',
-    paymentMethod: 'Pago en kiosco',
-  ),
-  PastOrder(
-    id: 1234,
-    status: PastOrderStatus.cancelada,
-    items: [PastOrderItem(codProd: 1, name: 'Café con leche', quantity: 1, unitPrice: 25000)],
-    store: 'Café Quindío · Centro',
-    date: '2 sep, 11:20 a. m.',
-    paymentMethod: 'Tarjeta (Wompi)',
-  ),
-];
+/// Fecha corta y amable para listas: "Hoy, 2:15 p. m.", "Ayer, …", "8 sep, …".
+String formatOrderDate(DateTime d, [DateTime? now]) {
+  final today = _dateOnly(now ?? DateTime.now());
+  final day = _dateOnly(d);
+  final diff = today.difference(day).inDays;
+  final when = diff == 0
+      ? 'Hoy'
+      : diff == 1
+          ? 'Ayer'
+          : '${d.day} ${_months[d.month - 1]}${d.year != today.year ? ' ${d.year}' : ''}';
+  return '$when, ${formatClock(d)}';
+}
 
-// MOCK: recibo de ejemplo si no llega el pedido ni se encuentra por id.
-const mockInvoice = PastOrder(
-  id: 1238,
-  status: PastOrderStatus.completada,
-  date: '10 sep 2026, 2:15 p. m.',
-  store: 'Café Quindío · Centro',
-  address: 'Calle 12 #9-34, Armenia, Quindío',
-  paymentMethod: 'Tarjeta Visa terminada en 4521 (Wompi)',
-  deliveryType: 'Recoger en tienda',
-  items: [
-    PastOrderItem(codProd: 3, name: 'Nitro Cold Brew', size: 'Grande', quantity: 1, unitPrice: 31000),
-    PastOrderItem(codProd: 5, name: 'Caramel Latte', size: 'Regular', quantity: 1, unitPrice: 28000),
-    PastOrderItem(name: 'Espresso extra', quantity: 1, unitPrice: 5000),
-  ],
-  discount: 2500,
-);
+/// Fecha larga para el recibo: "10 sep 2026, 2:15 p. m.".
+String formatLongDate(DateTime d) => '${d.day} ${_months[d.month - 1]} ${d.year}, ${formatClock(d)}';
+
+DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);

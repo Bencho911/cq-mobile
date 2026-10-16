@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/colors.dart';
@@ -10,6 +11,7 @@ import '../../core/theme/typography.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/zocalo.dart';
 import 'common.dart';
+import 'discounts.dart';
 
 const _countdown = 3;
 
@@ -19,19 +21,19 @@ const _total = 1050.0;
 Interval _at(double startMs, double endMs) => Interval(startMs / _total, endMs / _total, curve: CQMotion.easeOut);
 
 /// Confirmación breve antes del seguimiento: verde de fachada, sin halos.
-class OrderSuccessScreen extends StatefulWidget {
+class OrderSuccessScreen extends ConsumerStatefulWidget {
   const OrderSuccessScreen({super.key, this.orderId, this.earned = 0});
 
   final int? orderId;
 
-  /// Puntos estimados que sumó el pedido.
+  /// Puntos que sumó el pedido.
   final int earned;
 
   @override
-  State<OrderSuccessScreen> createState() => _OrderSuccessScreenState();
+  ConsumerState<OrderSuccessScreen> createState() => _OrderSuccessScreenState();
 }
 
-class _OrderSuccessScreenState extends State<OrderSuccessScreen> with SingleTickerProviderStateMixin {
+class _OrderSuccessScreenState extends ConsumerState<OrderSuccessScreen> with SingleTickerProviderStateMixin {
   late final _c = AnimationController(
     vsync: this,
     duration: Duration(milliseconds: _total.round()),
@@ -81,6 +83,16 @@ class _OrderSuccessScreenState extends State<OrderSuccessScreen> with SingleTick
     final title = CurvedAnimation(parent: _c, curve: _at(0, 450));
     final art = CurvedAnimation(parent: _c, curve: _at(150, 650));
 
+    // Premio del pago recién hecho (ave nueva o tarjeta completa).
+    final reward = ref.watch(lastRewardProvider);
+    final points = reward != null && reward.orderId == widget.orderId ? reward.points : null;
+    final bird = points?.newBirds.lastOrNull;
+    final prize = bird != null
+        ? '¡Ganaste al ${bird.name}!'
+        : (points?.cardsCompleted ?? 0) > 0
+        ? '¡Ganaste una bebida gratis!'
+        : null;
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
@@ -104,7 +116,7 @@ class _OrderSuccessScreenState extends State<OrderSuccessScreen> with SingleTick
                     'La barra ya lo está preparando. Te avisamos cuando esté listo.',
                     style: CQType.body(17, color: CQColors.onDark, height: 1.35),
                   ),
-                  if (widget.earned > 0) ...[const SizedBox(height: 20), _EarnedPoints(earned: widget.earned, controller: _c)],
+                  if (widget.earned > 0) ...[const SizedBox(height: 20), _EarnedPoints(earned: widget.earned, prize: prize, controller: _c)],
                 ],
               ),
             ),
@@ -180,8 +192,11 @@ class _Rise extends StatelessWidget {
 
 /// Puntos que sumó el pedido: la píldora entra y el número sube desde 0.
 class _EarnedPoints extends StatelessWidget {
-  const _EarnedPoints({required this.earned, required this.controller});
+  const _EarnedPoints({required this.earned, this.prize, required this.controller});
   final int earned;
+
+  /// "¡Ganaste al Toche!" si el pedido dio un premio.
+  final String? prize;
   final AnimationController controller;
 
   @override
@@ -189,7 +204,7 @@ class _EarnedPoints extends StatelessWidget {
     final enter = CurvedAnimation(parent: controller, curve: _at(450, 800));
     final count = CurvedAnimation(parent: controller, curve: _at(450, _total));
     return Semantics(
-      label: '+$earned puntos para tu álbum',
+      label: prize != null ? '+$earned puntos. $prize' : '+$earned puntos para tu álbum',
       excludeSemantics: true,
       child: _Rise(
         animation: enter,
@@ -208,7 +223,7 @@ class _EarnedPoints extends StatelessWidget {
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
-                  'puntos para tu álbum',
+                  prize != null ? 'puntos · $prize' : 'puntos para tu álbum',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: CQType.body(16, weight: FontWeight.w700),

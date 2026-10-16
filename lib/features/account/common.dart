@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/format.dart';
 import '../../core/theme/colors.dart';
+import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
 import '../../data/history.dart';
 import '../../state/reorder.dart';
@@ -132,25 +132,6 @@ class BottomActionBar extends StatelessWidget {
 /// "Café Quindío · Centro" → "Tienda Centro".
 String shortStore(String name) => 'Tienda ${name.replaceFirst(RegExp(r'^Café Quindío\s*[·-]\s*', caseSensitive: false), '')}';
 
-/// Métodos de pago como los guarda el backend → como los lee el cliente.
-const paymentLabels = {
-  'wompi': 'Tarjeta (Wompi)',
-  'efectivo': 'Efectivo en tienda',
-  'kiosco': 'Pago en kiosco',
-};
-
-const _monthsShort = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-const _monthsLong = [
-  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', //
-  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
-];
-
-/// "10 sep 2026, 2:15 p. m."
-String formatShortDate(DateTime d) => '${d.day} ${_monthsShort[d.month - 1]} ${d.year}, ${formatClock(d)}';
-
-/// "10 de septiembre de 2026, 2:15 p. m."
-String formatLongDate(DateTime d) => '${d.day} de ${_monthsLong[d.month - 1]} de ${d.year}, ${formatClock(d)}';
-
 /// Etiqueta y tono de cada estado del historial.
 (String, BadgeTone) statusBadgeFor(PastOrderStatus s) => switch (s) {
       PastOrderStatus.pendiente => ('Recibido', BadgeTone.warning),
@@ -161,7 +142,7 @@ String formatLongDate(DateTime d) => '${d.day} de ${_monthsLong[d.month - 1]} de
     };
 
 List<ReorderLine> reorderLinesOf(PastOrder o) =>
-    [for (final i in o.items) ReorderLine(codProd: i.codProd, name: i.name, quantity: i.quantity, size: i.size)];
+    [for (final i in o.items) ReorderLine(codProd: i.codProd, name: i.name, quantity: i.quantity, size: i.size, variant: i.variant, toppings: i.toppings)];
 
 /// "Repetir pedido": agrega al carrito, avisa y lleva al checkout.
 Future<void> repeatOrder(BuildContext context, WidgetRef ref, List<ReorderLine> lines) async {
@@ -231,4 +212,115 @@ class PlainRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Fila con interruptor: toda la fila lo cambia. Sin [onChanged] queda
+/// deshabilitada (atenuada).
+class SwitchRow extends StatelessWidget {
+  const SwitchRow({super.key, required this.icon, required this.label, required this.description, required this.value, this.onChanged, this.busy = false});
+
+  final IconData icon;
+  final String label;
+  final String description;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  /// Esperando al sistema (p. ej. Face ID): no acepta otro toque.
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = CQMotion.reduced(context) ? Duration.zero : CQMotion.fast;
+    final enabled = onChanged != null && !busy;
+    void toggle() => enabled ? onChanged!(!value) : null;
+    return Semantics(
+      toggled: value,
+      enabled: onChanged != null,
+      label: label,
+      hint: description,
+      excludeSemantics: true,
+      onTap: enabled ? toggle : null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: toggle,
+        child: AnimatedOpacity(
+          duration: duration,
+          opacity: onChanged == null ? 0.5 : 1,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: CQColors.line))),
+            child: Row(children: [
+              Icon(icon, size: 20, color: CQColors.ink),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(label, style: CQType.body(16)),
+                  Text(description, style: CQType.body(14, color: CQColors.muted)),
+                ]),
+              ),
+              SizedBox(
+                width: 56,
+                height: 44,
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: duration,
+                    width: 50,
+                    height: 30,
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(color: value ? CQColors.ink : CQColors.mutedSoft, borderRadius: BorderRadius.circular(15)),
+                    child: AnimatedAlign(
+                      duration: duration,
+                      curve: CQMotion.easeOut,
+                      alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: const BoxDecoration(
+                          color: CQColors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [BoxShadow(color: Color(0x1F000000), blurRadius: 2, offset: Offset(0, 1))],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Hoja de confirmación con acción principal y "Cancelar". Devuelve `true`
+/// si el cliente confirma.
+Future<bool> confirmSheet(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String confirmLabel,
+  bool danger = false,
+}) async {
+  final ok = await showCQSheet<bool>(
+    context,
+    (context) => Padding(
+      padding: EdgeInsets.fromLTRB(20, 24, 20, MediaQuery.paddingOf(context).bottom + 16),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text(title, style: CQType.title(26, height: 1.05)),
+        const SizedBox(height: 10),
+        Text(message, style: CQType.body(16, color: CQColors.muted, height: 1.5)),
+        const SizedBox(height: 24),
+        CQButton(
+          label: confirmLabel,
+          variant: danger ? CQButtonVariant.danger : CQButtonVariant.primary,
+          onPressed: () => Navigator.of(context).pop(true),
+        ),
+        const SizedBox(height: 8),
+        CQButton(label: 'Cancelar', variant: CQButtonVariant.secondary, onPressed: () => Navigator.of(context).pop(false)),
+      ]),
+    ),
+  );
+  return ok ?? false;
 }

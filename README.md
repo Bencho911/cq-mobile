@@ -5,6 +5,36 @@ fila y llenar el álbum de aves con los puntos. Es la versión móvil de
 [cq-frontend](https://github.com/Bencho911/cq-frontend) (web en React), con el
 mismo sistema de diseño «Fachadas».
 
+## Qué guarda el teléfono
+
+Mientras el backend no exponga usuarios ni historial, la app es funcional por
+sí sola y guarda todo en el teléfono:
+
+- **Cuenta** (nombre, celular, cédula, correo) en preferencias; el **PIN**
+  como hash con sal en el llavero del sistema (Keychain / Keystore).
+- **Pedidos** con su estado, calificación y reseña; **puntos**, aves, bebidas
+  gratis y movimientos; **notificaciones**; **preferencias** (tiendas favoritas,
+  avisos, sonido, vibración); **carrito**, dirección y cupón aplicado.
+- El teléfono guarda una sola cuenta: si entra otra persona, se borran los
+  datos de la anterior. «Eliminar mi cuenta» borra todo.
+- El código de verificación del registro aún no llega por SMS: la app lo
+  muestra como «Código de prueba».
+
+## Ingreso
+
+- **Celular + PIN** de 6 dígitos (5 intentos y espera de 30 s).
+- **Face ID / Touch ID / huella**: se activa en Privacidad y seguridad. Con
+  ella activa, la app se bloquea al abrirla o tras 2 minutos en segundo plano.
+- **Google**: necesita los ID de cliente de OAuth. En iOS se pasan con
+  `--dart-define=GOOGLE_IOS_CLIENT_ID=…` y el esquema de URL invertido en
+  `Info.plist` (Codemagic lo agrega solo con el grupo de variables `google`).
+  En Android, registrar el SHA-1 de la firma en Google Cloud y pasar
+  `GOOGLE_SERVER_CLIENT_ID`.
+- **Apple** (solo iPhone): requiere la capacidad «Sign in with Apple» en el
+  App ID, que solo da la cuenta de Apple Developer de pago. El flujo de
+  TestFlight la agrega; con Sideloadly y un Apple ID gratuito no funciona y
+  la app lo dice con un aviso.
+
 ## Requisitos
 
 - Flutter 3.47 o superior (Dart 3.13)
@@ -107,4 +137,7 @@ assets/       fuentes, ilustraciones de marca, fotos de producto, sonidos
 
 - Confirmar la licencia de Neutra Text (House Industries) para uso en apps.
 - Regla real de puntos: hoy es una estimación provisional (1 punto por cada $5.000).
-- Perfil, historial de pedidos y saldo de puntos son mock hasta que el backend los exponga.
+- Conectar cuenta, historial y puntos al backend cuando existan esos servicios
+  (hoy viven solo en el teléfono).
+- SMS real para el código de verificación.
+- Deep link de vuelta desde Wompi para confirmar el pago antes de «Pedido recibido».

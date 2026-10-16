@@ -9,6 +9,7 @@ import '../../state/loyalty.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/stamp.dart';
 import '../../widgets/zocalo.dart';
+import 'auth_widgets.dart';
 
 class _Step {
   const _Step({required this.tone, required this.title, required this.description, this.image});
@@ -113,19 +114,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       duration: CQMotion.fast,
                       child: _Logo(key: ValueKey(tone.isDark), tone: tone),
                     ),
-                    const Spacer(),
-                    Pressable(
-                      onTap: () => context.push('/login'),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(minHeight: 44),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Center(
-                            widthFactor: 1,
-                            child: AnimatedDefaultTextStyle(
-                              duration: CQMotion.fast,
-                              style: CQType.body(15, weight: FontWeight.w600, color: tone.onWall),
-                              child: const Text('Ya tengo cuenta'),
+                    const SizedBox(width: 12),
+                    // Ocupa lo que sobre a la derecha; con letra grande baja de línea.
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Pressable(
+                          onTap: () => context.push('/login'),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 44),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              child: Center(
+                                widthFactor: 1,
+                                child: AnimatedDefaultTextStyle(
+                                  duration: CQMotion.fast,
+                                  textAlign: TextAlign.right,
+                                  style: CQType.body(15, weight: FontWeight.w600, color: tone.onWall),
+                                  child: const Text('Ya tengo cuenta'),
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -138,16 +146,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           Padding(
             padding: EdgeInsets.fromLTRB(24, 20, 24, pad.bottom + 20),
-            child: Row(children: [
-              AnimatedBuilder(
-                animation: _pages,
-                builder: (context, _) => _Dots(page: _page, count: _steps.length, onTap: _goTo),
-              ),
-              const Spacer(),
-              CQButton(
-                label: _isLast ? 'Crear mi cuenta' : 'Siguiente',
-                onPressed: _next,
-                expand: false,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(children: [
+                AnimatedBuilder(
+                  animation: _pages,
+                  builder: (context, _) => _Dots(page: _page, count: _steps.length, onTap: _goTo),
+                ),
+                const SizedBox(width: 12),
+                // Se encoge si el texto no cabe (letra grande del sistema).
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: CQButton(
+                        label: _isLast ? 'Crear mi cuenta' : 'Siguiente',
+                        onPressed: _next,
+                        expand: false,
+                      ),
+                    ),
+                  ),
+                ),
+              ]),
+              // En el último paso: entrar con Apple o Google sin registro.
+              AnimatedSize(
+                duration: reduced ? Duration.zero : CQMotion.medium,
+                curve: CQMotion.easeOut,
+                alignment: Alignment.topCenter,
+                child: _isLast ? const Padding(padding: EdgeInsets.only(top: 6), child: SocialSignIn()) : const SizedBox(width: double.infinity),
               ),
             ]),
           ),

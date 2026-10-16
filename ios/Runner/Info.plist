@@ -3,6 +3,8 @@
 <plist version="1.0">
 <dict>
 	<!-- Solo HTTPS estándar: sin cifrado propio que declarar en cada envío a TestFlight. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Usamos Face ID para que entres a tu cuenta sin escribir el PIN.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>

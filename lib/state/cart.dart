@@ -90,6 +90,7 @@ class CartState {
     this.deliveryType = DeliveryType.recoger,
     this.pickupTime,
     this.paymentMethod,
+    this.address = const DeliveryAddress(),
   });
 
   final List<CartItem> items;
@@ -99,6 +100,9 @@ class CartState {
   /// Hora de recogida; `null` = "lo antes posible".
   final DateTime? pickupTime;
   final String? paymentMethod;
+
+  /// Dirección para domicilio (se recuerda para el próximo pedido).
+  final DeliveryAddress address;
 
   int get count => items.fold(0, (sum, i) => sum + i.quantity);
   int get subtotal => items.fold(0, (sum, i) => sum + i.quantity * i.unitPrice);
@@ -115,6 +119,7 @@ class CartState {
     DeliveryType? deliveryType,
     DateTime? Function()? pickupTime,
     String? Function()? paymentMethod,
+    DeliveryAddress? address,
   }) =>
       CartState(
         items: items ?? this.items,
@@ -122,6 +127,7 @@ class CartState {
         deliveryType: deliveryType ?? this.deliveryType,
         pickupTime: pickupTime != null ? pickupTime() : this.pickupTime,
         paymentMethod: paymentMethod != null ? paymentMethod() : this.paymentMethod,
+        address: address ?? this.address,
       );
 
   /// Líneas de orden para el backend (precio con descuento, el que vio el cliente).
@@ -141,6 +147,7 @@ class CartState {
         'deliveryType': deliveryType.name,
         'pickupTime': pickupTime?.toIso8601String(),
         'paymentMethod': paymentMethod,
+        'address': address.toJson(),
       };
 
   factory CartState.fromJson(Map<String, dynamic> j) => CartState(
@@ -151,7 +158,31 @@ class CartState {
         deliveryType: DeliveryType.values.asNameMap()[j['deliveryType']] ?? DeliveryType.recoger,
         pickupTime: DateTime.tryParse('${j['pickupTime'] ?? ''}'),
         paymentMethod: j['paymentMethod'] as String?,
+        address: j['address'] is Map ? DeliveryAddress.fromJson(Map<String, dynamic>.from(j['address'] as Map)) : const DeliveryAddress(),
       );
+}
+
+/// Dirección de entrega a domicilio.
+class DeliveryAddress {
+  const DeliveryAddress({this.line = '', this.detail = '', this.notes = ''});
+  final String line;
+  final String detail;
+  final String notes;
+
+  bool get isEmpty => line.trim().isEmpty;
+
+  /// "Calle 12 #9-34, Apto 301 (Casa azul)".
+  String get label => [
+        line.trim(),
+        if (detail.trim().isNotEmpty) detail.trim(),
+      ].join(', ') + (notes.trim().isEmpty ? '' : ' (${notes.trim()})');
+
+  DeliveryAddress copyWith({String? line, String? detail, String? notes}) =>
+      DeliveryAddress(line: line ?? this.line, detail: detail ?? this.detail, notes: notes ?? this.notes);
+
+  Map<String, dynamic> toJson() => {'line': line, 'detail': detail, 'notes': notes};
+  factory DeliveryAddress.fromJson(Map<String, dynamic> j) =>
+      DeliveryAddress(line: j['line'] as String? ?? '', detail: j['detail'] as String? ?? '', notes: j['notes'] as String? ?? '');
 }
 
 /// Carrito persistente (se guarda entre visitas).
@@ -196,6 +227,7 @@ class CartNotifier extends Notifier<CartState> {
   void setDelivery(DeliveryType type) => _set(state.copyWith(deliveryType: type));
   void setPickupTime(DateTime? time) => _set(state.copyWith(pickupTime: () => time));
   void setPaymentMethod(String? method) => _set(state.copyWith(paymentMethod: () => method));
+  void setAddress(DeliveryAddress address) => _set(state.copyWith(address: address));
 }
 
 final cartProvider = NotifierProvider<CartNotifier, CartState>(CartNotifier.new);

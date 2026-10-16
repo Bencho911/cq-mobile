@@ -5,12 +5,15 @@ import 'package:go_router/go_router.dart';
 
 import '../../widgets/shells.dart';
 import '../../widgets/zocalo.dart';
+import 'confirm_otp.dart';
 
-/// Espera mientras se envía el SMS; a los 3 s pasa a confirmar el código.
+/// Espera mientras se «envía» el SMS; a los 3 s pasa a confirmar el código.
 class OtpLoadingScreen extends StatefulWidget {
-  const OtpLoadingScreen({super.key, this.phone});
+  const OtpLoadingScreen({super.key, this.phone, this.code, this.recover = false});
 
   final String? phone;
+  final String? code;
+  final bool recover;
 
   @override
   State<OtpLoadingScreen> createState() => _OtpLoadingScreenState();
@@ -22,10 +25,10 @@ class _OtpLoadingScreenState extends State<OtpLoadingScreen> {
   @override
   void initState() {
     super.initState();
-    final phone = widget.phone ?? '300 000 0000';
-    // Reemplaza la espera: al volver desde el código se llega al registro.
+    final args = OtpArgs(phone: widget.phone, code: widget.code, recover: widget.recover);
+    // Reemplaza la espera: al volver desde el código se llega a la pantalla anterior.
     _timer = Timer(const Duration(seconds: 3), () {
-      if (mounted) context.pushReplacement('/confirm-otp', extra: phone);
+      if (mounted) context.pushReplacement('/confirm-otp', extra: args);
     });
   }
 

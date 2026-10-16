@@ -7,42 +7,40 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../core/theme/colors.dart';
 import '../../core/theme/typography.dart';
+import '../../state/account.dart';
 import '../../state/loyalty.dart';
+import '../../state/preferences.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/stamp.dart';
 import 'common.dart';
 
-// MOCK: datos de usuario para la demo de gerencia (el backend aún no expone el perfil).
-const _mockUserName = 'Santiago Restrepo';
-const _mockUserPhone = '+57 313 892 4671';
-
 /// Destinos que son pestañas: se cambian con go(), el resto se apila.
 const _tabs = {'/home', '/menu', '/album', '/orders'};
 
-typedef _Item = ({IconData icon, String label, String to, String? value});
+typedef _Item = ({IconData icon, String label, String to});
 
 const List<(String, List<_Item>)> _menuGroups = [
   (
     'Mi cuenta',
     [
-      (icon: LucideIcons.history, label: 'Historial de pedidos', to: '/orders', value: null),
-      (icon: LucideIcons.mapPin, label: 'Mis tiendas favoritas', to: '/stores', value: null),
-      (icon: LucideIcons.creditCard, label: 'Métodos de pago', to: '/payment-method', value: null),
+      (icon: LucideIcons.userPen, label: 'Editar perfil', to: '/edit-profile'),
+      (icon: LucideIcons.history, label: 'Historial de pedidos', to: '/orders'),
+      (icon: LucideIcons.mapPin, label: 'Mis tiendas favoritas', to: '/stores'),
+      (icon: LucideIcons.creditCard, label: 'Métodos de pago', to: '/payment-method'),
     ],
   ),
   (
     'Beneficios',
     [
-      // MOCK: cantidad de cupones activos.
-      (icon: LucideIcons.ticket, label: 'Bonos y cupones', to: '/vouchers', value: '2 activos'),
-      (icon: LucideIcons.gift, label: 'Puntos y álbum de aves', to: '/album', value: null),
+      (icon: LucideIcons.ticket, label: 'Bonos y cupones', to: '/vouchers'),
+      (icon: LucideIcons.gift, label: 'Puntos y álbum de aves', to: '/album'),
     ],
   ),
   (
     'Configuración',
     [
-      (icon: LucideIcons.shield, label: 'Privacidad y seguridad', to: '/privacy', value: null),
-      (icon: LucideIcons.settings, label: 'Preferencias', to: '/home', value: null),
+      (icon: LucideIcons.shield, label: 'Privacidad y seguridad', to: '/privacy'),
+      (icon: LucideIcons.settings, label: 'Preferencias', to: '/preferences'),
     ],
   ),
 ];
@@ -51,9 +49,30 @@ const List<(String, List<_Item>)> _menuGroups = [
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
+  /// Con confirmación; el router lleva a la bienvenida al cerrar la sesión.
+  Future<void> _logout(BuildContext context, WidgetRef ref) async {
+    final ok = await confirmSheet(
+      context,
+      title: '¿Cerrar sesión?',
+      message: 'Tus pedidos y puntos quedan guardados en este teléfono para cuando vuelvas.',
+      confirmLabel: 'Cerrar sesión',
+      danger: true,
+    );
+    if (ok) await ref.read(authProvider.notifier).logout();
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final account = ref.watch(authProvider).account;
+    final favorites = ref.watch(preferencesProvider.select((p) => p.favoriteStores.length));
     final s = summarize(ref.watch(loyaltyAccountProvider));
+    final name = account?.name.isNotEmpty ?? false ? account!.name : 'Cliente Café Quindío';
+    final contact = account?.phoneLabel ?? account?.email;
+    final provider = switch (account?.provider) {
+      AuthProvider.google => 'Cuenta de Google',
+      AuthProvider.apple => 'Cuenta de Apple',
+      _ => null,
+    };
     final stampBird = s.nextBird ?? s.slots.last.bird;
     final top = math.max(MediaQuery.paddingOf(context).top, 20.0);
 
@@ -76,14 +95,16 @@ class ProfileScreen extends ConsumerWidget {
               height: 64,
               alignment: Alignment.center,
               decoration: const BoxDecoration(color: CQColors.mostaza, shape: BoxShape.circle),
-              child: Text(_mockUserName.characters.first, style: CQType.title(28, height: 1)),
+              child: Text(account?.initial ?? 'C', style: CQType.title(28, height: 1)),
             ),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_mockUserName, maxLines: 1, overflow: TextOverflow.ellipsis, style: CQType.title(28, height: 1.15)),
-              Text(_mockUserPhone, style: CQType.number(15, color: CQColors.muted).copyWith(fontWeight: FontWeight.w400)),
+              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CQType.title(28, height: 1.15)),
+              if (contact != null)
+                Text(contact, maxLines: 1, overflow: TextOverflow.ellipsis, style: CQType.number(15, color: CQColors.muted).copyWith(fontWeight: FontWeight.w400)),
+              if (provider != null) Text(provider, style: CQType.body(13, color: CQColors.muted)),
             ]),
           ),
         ]),
@@ -129,11 +150,17 @@ class ProfileScreen extends ConsumerWidget {
           const SizedBox(height: 28),
           Text(title, style: CQType.title(20, height: 1.1)),
           const SizedBox(height: 4),
-          for (final item in items) ListRow(icon: item.icon, label: item.label, value: item.value, onTap: () => open(item.to)),
+          for (final item in items)
+            ListRow(
+              icon: item.icon,
+              label: item.label,
+              value: item.to == '/stores' && favorites > 0 ? '$favorites' : null,
+              onTap: () => open(item.to),
+            ),
         ],
 
         const SizedBox(height: 16),
-        PlainRow(icon: LucideIcons.logOut, label: 'Cerrar sesión', danger: true, onTap: () => context.go('/onboarding')),
+        PlainRow(icon: LucideIcons.logOut, label: 'Cerrar sesión', danger: true, onTap: () => _logout(context, ref)),
       ]),
     );
   }

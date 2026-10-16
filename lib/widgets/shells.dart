@@ -192,9 +192,13 @@ class CQTextField extends StatelessWidget {
     this.textInputAction,
     this.maxLines = 1,
     this.inputFormatters,
+    this.initialValue,
   });
 
   final String label;
+
+  /// Valor inicial cuando no se pasa [controller].
+  final String? initialValue;
   final TextEditingController? controller;
   final String? hint;
   final TextInputType? keyboardType;
@@ -210,8 +214,9 @@ class CQTextField extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: CQType.body(15, weight: FontWeight.w600)),
       const SizedBox(height: 6),
-      TextField(
+      TextFormField(
         controller: controller,
+        initialValue: controller == null ? initialValue : null,
         keyboardType: keyboardType,
         onChanged: onChanged,
         autofillHints: autofillHints,

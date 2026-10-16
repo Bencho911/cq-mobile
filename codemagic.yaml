@@ -12,6 +12,10 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      # Para Google: crear en Codemagic el grupo de variables "google" con
+      # GOOGLE_IOS_CLIENT_ID (y GOOGLE_SERVER_CLIENT_ID) y descomentar:
+      # groups:
+      #   - google
     scripts:
       - name: Dependencias
         script: flutter pub get
@@ -19,8 +23,21 @@ workflows:
         script: |
           flutter analyze
           flutter test
+      - name: Google (opcional)
+        # Con GOOGLE_IOS_CLIENT_ID (grupo de variables "google" en Codemagic) se
+        # registra el esquema de URL que Google usa para volver a la app.
+        script: |
+          if [ -n "$GOOGLE_IOS_CLIENT_ID" ]; then
+            REVERSED=$(echo "$GOOGLE_IOS_CLIENT_ID" | awk -F. '{for(i=NF;i>0;i--) printf "%s%s", $i, (i>1?".":"")}')
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" ios/Runner/Info.plist || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" ios/Runner/Info.plist
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" ios/Runner/Info.plist
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string $REVERSED" ios/Runner/Info.plist
+            /usr/libexec/PlistBuddy -c "Add :GIDClientID string $GOOGLE_IOS_CLIENT_ID" ios/Runner/Info.plist
+          fi
       - name: Compilar sin firmar
-        script: flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER
+        script: flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER \
+          --dart-define=GOOGLE_IOS_CLIENT_ID=${GOOGLE_IOS_CLIENT_ID:-} --dart-define=GOOGLE_SERVER_CLIENT_ID=${GOOGLE_SERVER_CLIENT_ID:-}
       - name: Empaquetar el .ipa
         # Un .ipa es un zip con la app dentro de una carpeta Payload/.
         script: |
@@ -56,6 +73,30 @@ workflows:
         script: |
           flutter analyze
           flutter test
+      - name: Google (opcional)
+        # Con GOOGLE_IOS_CLIENT_ID (grupo de variables "google" en Codemagic) se
+        # registra el esquema de URL que Google usa para volver a la app.
+        script: |
+          if [ -n "$GOOGLE_IOS_CLIENT_ID" ]; then
+            REVERSED=$(echo "$GOOGLE_IOS_CLIENT_ID" | awk -F. '{for(i=NF;i>0;i--) printf "%s%s", $i, (i>1?".":"")}')
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" ios/Runner/Info.plist || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" ios/Runner/Info.plist
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" ios/Runner/Info.plist
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string $REVERSED" ios/Runner/Info.plist
+            /usr/libexec/PlistBuddy -c "Add :GIDClientID string $GOOGLE_IOS_CLIENT_ID" ios/Runner/Info.plist
+          fi
+      - name: Iniciar con Apple
+        # Requiere la capacidad "Sign in with Apple" en el App ID (cuenta de pago).
+        # No se agrega en el flujo de Sideloadly: la cuenta gratuita no la permite.
+        script: |
+          cat > ios/Runner/Runner.entitlements <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>com.apple.developer.applesignin</key><array><string>Default</string></array>
+          </dict></plist>
+          PLIST
+          sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = co.com.cafequindio.app;/PRODUCT_BUNDLE_IDENTIFIER = co.com.cafequindio.app; CODE_SIGN_ENTITLEMENTS = Runner\/Runner.entitlements;/' ios/Runner.xcodeproj/project.pbxproj
       - name: Perfiles de firma
         script: xcode-project use-profiles
       - name: Compilar el .ipa
@@ -65,7 +106,8 @@ workflows:
           LAST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" || echo 0)
           flutter build ipa --release \
             --build-number=$((LAST + 1)) \
-            --export-options-plist=/Users/builder/export_options.plist
+            --export-options-plist=/Users/builder/export_options.plist \
+            --dart-define=GOOGLE_IOS_CLIENT_ID=${GOOGLE_IOS_CLIENT_ID:-} --dart-define=GOOGLE_SERVER_CLIENT_ID=${GOOGLE_SERVER_CLIENT_ID:-}
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log

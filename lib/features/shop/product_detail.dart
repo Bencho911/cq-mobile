@@ -13,6 +13,7 @@ import '../../core/theme/typography.dart';
 import '../../data/models.dart';
 import '../../state/cart.dart';
 import '../../state/customization.dart';
+import '../../state/preferences.dart';
 import '../../widgets/controls.dart';
 import 'shop_widgets.dart';
 
@@ -89,7 +90,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> with 
   }
 
   void _add() {
-    HapticFeedback.lightImpact();
+    if (ref.read(preferencesProvider).haptics) HapticFeedback.lightImpact();
     ref.read(cartProvider.notifier).add(CartItem(
           product: _product,
           quantity: _quantity,
@@ -373,27 +374,31 @@ class _Chips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(spacing: 6, runSpacing: 6, children: [
-      for (final o in options)
-        Semantics(
-          selected: value == o,
-          inMutuallyExclusiveGroup: true,
-          child: Pressable(
-            onTap: () => onChanged(o),
-            child: AnimatedContainer(
-              duration: CQMotion.fast,
-              curve: CQMotion.easeOut,
-              height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: value == o ? CQColors.ink : CQColors.line, width: 1.5),
+    // Una columna por opción, lado a lado (como en la web).
+    return Row(children: [
+      for (final (i, o) in options.indexed) ...[
+        if (i > 0) const SizedBox(width: 6),
+        Expanded(
+          child: Semantics(
+            selected: value == o,
+            inMutuallyExclusiveGroup: true,
+            child: Pressable(
+              onTap: () => onChanged(o),
+              child: AnimatedContainer(
+                duration: CQMotion.fast,
+                curve: CQMotion.easeOut,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: value == o ? CQColors.ink : CQColors.line, width: 1.5),
+                ),
+                child: Text(o, maxLines: 1, overflow: TextOverflow.ellipsis, style: CQType.body(15, weight: value == o ? FontWeight.w700 : FontWeight.w400)),
               ),
-              child: Text(o, style: CQType.body(15, weight: value == o ? FontWeight.w700 : FontWeight.w400)),
             ),
           ),
         ),
+      ],
     ]);
   }
 }

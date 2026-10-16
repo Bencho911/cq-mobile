@@ -8,6 +8,7 @@ import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
 import '../../data/history.dart';
+import '../../state/orders.dart';
 import '../../widgets/controls.dart';
 import 'common.dart';
 
@@ -22,7 +23,8 @@ class OrdersScreen extends ConsumerStatefulWidget {
 }
 
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
-  var _tab = _Tab.activos;
+  /// Sin elegir: abre "En curso" si hay pedidos activos, si no el historial.
+  _Tab? _tab;
   bool _busy = false;
 
   Future<void> _reorder(PastOrder o) async {
@@ -34,8 +36,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final list = _tab == _Tab.activos ? mockActiveOrders : mockOrderHistory;
-    final activeLabel = mockActiveOrders.isEmpty ? 'En curso' : 'En curso  ${mockActiveOrders.length}';
+    final active = ref.watch(activeOrdersProvider);
+    final history = ref.watch(orderHistoryProvider);
+    final tab = _tab ?? (active.isEmpty && history.isNotEmpty ? _Tab.historial : _Tab.activos);
+    final list = tab == _Tab.activos ? active : history;
+    final activeLabel = active.isEmpty ? 'En curso' : 'En curso  ${active.length}';
+    final newCustomer = active.isEmpty && history.isEmpty;
 
     return Scaffold(
       body: CustomScrollView(slivers: [
@@ -47,7 +53,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               label: 'Tipo de pedidos',
               child: Segmented<_Tab>(
                 options: [(_Tab.activos, activeLabel), (_Tab.historial, 'Historial')],
-                value: _tab,
+                value: tab,
                 onChanged: (t) => setState(() => _tab = t),
               ),
             ),
@@ -60,14 +66,20 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             switchInCurve: CQMotion.easeOut,
             layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]),
             child: KeyedSubtree(
-              key: ValueKey(_tab),
+              key: ValueKey(tab),
               child: list.isEmpty
                   ? EmptyState(
                       image: 'assets/brand/ave-colibri-rosa.webp',
-                      title: _tab == _Tab.activos ? 'No tienes pedidos en curso' : 'Aún no tienes pedidos',
-                      description: _tab == _Tab.activos
-                          ? 'Cuando hagas un pedido, aquí verás cómo va.'
-                          : 'Tus pedidos anteriores aparecerán aquí para repetirlos rápido.',
+                      title: newCustomer
+                          ? 'Aún no tienes pedidos'
+                          : tab == _Tab.activos
+                              ? 'No tienes pedidos en curso'
+                              : 'Aún no tienes pedidos anteriores',
+                      description: newCustomer
+                          ? 'Pide tu primer café: aquí verás cómo va y podrás repetirlo rápido.'
+                          : tab == _Tab.activos
+                              ? 'Cuando hagas un pedido, aquí verás cómo va.'
+                              : 'Tus pedidos anteriores aparecerán aquí para repetirlos rápido.',
                       action: CQButton(label: 'Ver el menú', height: 48, expand: false, onPressed: () => context.go('/menu')),
                     )
                   : Padding(
@@ -77,7 +89,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                           _OrderRow(
                             order: o,
                             busy: _busy,
-                            onOpen: () => context.push('/invoice/${o.id}', extra: o),
+                            // En curso → seguimiento; terminado → recibo.
+                            onOpen: () => o.status.isActive
+                                ? context.push('/track-order', extra: o.id)
+                                : context.push('/invoice/${o.id}', extra: o),
                             onReorder: o.status == PastOrderStatus.completada || o.status == PastOrderStatus.cancelada
                                 ? () => _reorder(o)
                                 : null,
@@ -128,7 +143,7 @@ class _OrderRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text('${order.date}, ${shortStore(order.store)}', style: CQType.body(14, color: CQColors.muted)),
                   const SizedBox(height: 4),
-                  Text(order.items.map((i) => i.name).join(', '), style: CQType.body(15, height: 1.35)),
+                  Text(orderSummary(order), style: CQType.body(15, height: 1.35)),
                 ]),
               ),
               const SizedBox(width: 12),

@@ -320,12 +320,16 @@ enum DoorTone { teal, rosa, verde, mostaza }
 
 /// Puerta pintada de fachada: entrada a una categoría.
 class Door extends StatelessWidget {
-  const Door({super.key, required this.title, required this.tone, this.subtitle, this.image, this.onTap, this.height = 150});
+  const Door({super.key, required this.title, required this.tone, this.subtitle, this.image, this.imageTint, this.onTap, this.height = 150});
 
   final String title;
   final String? subtitle;
   final String? image;
   final DoorTone tone;
+
+  /// Tiñe la ilustración de una sola tinta cuando su color se confunde con
+  /// el de la puerta (la heliconia rosada sobre la puerta rosa).
+  final Color? imageTint;
   final VoidCallback? onTap;
   final double height;
 
@@ -349,7 +353,12 @@ class Door extends StatelessWidget {
               topLeft: Radius.circular(52), topRight: Radius.circular(52), bottomLeft: Radius.circular(6), bottomRight: Radius.circular(6)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (image != null) Center(child: Image.asset(image!, height: 64)),
+          if (image != null)
+            Center(
+              child: imageTint == null
+                  ? Image.asset(image!, height: 64)
+                  : ColorFiltered(colorFilter: ColorFilter.mode(imageTint!, BlendMode.srcIn), child: Image.asset(image!, height: 64)),
+            ),
           const Spacer(),
           Text(title, style: CQType.title(18, color: fg, height: 1)),
           if (subtitle != null) ...[

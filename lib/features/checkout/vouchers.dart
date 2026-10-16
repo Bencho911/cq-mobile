@@ -1,45 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../core/format.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
+import '../../state/cart.dart';
 import '../../widgets/controls.dart';
 import 'common.dart';
-
-typedef _Voucher = ({int id, String amount, String title, String subtitle, bool disabled, String? error});
-
-// MOCK: el backend no expone cupones/descuentos aún.
-const List<_Voucher> _vouchers = [
-  (id: 1, amount: '10%', title: 'Descuento del 10%', subtitle: 'En compras desde \$20.000', disabled: false, error: null),
-  (id: 2, amount: '15%', title: 'Descuento del 15%', subtitle: 'En compras desde \$25.000', disabled: false, error: null),
-  (
-    id: 3,
-    amount: '\$75.000',
-    title: 'Descuento de \$75.000',
-    subtitle: 'En compras desde \$280.000',
-    disabled: true,
-    error: 'Te faltan \$100.000 para usar este cupón.',
-  ),
-  (
-    id: 4,
-    amount: '\$20.000',
-    title: 'Descuento de \$20.000',
-    subtitle: 'En compras desde \$80.000',
-    disabled: true,
-    error: 'Te faltan \$60.000 para usar este cupón.',
-  ),
-  (
-    id: 5,
-    amount: '30%',
-    title: 'Descuento del 30%',
-    subtitle: 'En compras desde \$30.000',
-    disabled: true,
-    error: 'Te faltan \$20.000 para usar este cupón.',
-  ),
-];
+import 'discounts.dart';
 
 /// Pasa el texto a mayúsculas mientras se escribe.
 class _UpperCase extends TextInputFormatter {
@@ -48,22 +20,29 @@ class _UpperCase extends TextInputFormatter {
       newValue.copyWith(text: newValue.text.toUpperCase());
 }
 
-class VouchersScreen extends StatefulWidget {
+/// Bonos y cupones: el elegido se aplica al total del carrito.
+class VouchersScreen extends ConsumerStatefulWidget {
   const VouchersScreen({super.key});
 
   @override
-  State<VouchersScreen> createState() => _VouchersScreenState();
+  ConsumerState<VouchersScreen> createState() => _VouchersScreenState();
 }
 
-class _VouchersScreenState extends State<VouchersScreen> {
+class _VouchersScreenState extends ConsumerState<VouchersScreen> {
   final _code = TextEditingController();
-  int? _selectedId = 2;
+  late int? _selectedId = ref.read(appliedVoucherProvider)?.id;
   String? _codeError;
 
   @override
   void initState() {
     super.initState();
     _code.addListener(() => setState(() {}));
+  }
+
+  /// Con el carrito vacío no se valida el mínimo: se valida al pagar.
+  int _missing(Voucher v) {
+    final cart = ref.read(cartProvider);
+    return cart.items.isEmpty ? 0 : v.missing(cart.subtotal);
   }
 
   @override
@@ -74,15 +53,44 @@ class _VouchersScreenState extends State<VouchersScreen> {
 
   void _back() => context.canPop() ? context.pop() : context.go('/home');
 
-  // MOCK: sin endpoint de validación, cualquier código se rechaza.
+  // MOCK: sin endpoint de validación, el código se busca en la lista local.
   void _applyCode() {
     if (_code.text.trim().isEmpty) return;
-    setState(() => _codeError = 'No encontramos ese código. Revisa que esté bien escrito e intenta de nuevo.');
+    final v = voucherByCode(_code.text);
+    if (v == null) {
+      setState(() => _codeError = 'No encontramos ese código. Revisa que esté bien escrito e intenta de nuevo.');
+      return;
+    }
+    final missing = _missing(v);
+    if (missing > 0) {
+      setState(() => _codeError = 'Te faltan ${formatCOP(missing)} para usar este cupón.');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    _code.clear();
+    setState(() {
+      _codeError = null;
+      _selectedId = v.id;
+    });
+    showToast(context, 'Cupón ${v.code} listo', detail: '${v.title}. Toca «Usar cupón» para aplicarlo.');
+  }
+
+  void _confirm() {
+    final v = voucherById(_selectedId);
+    final applied = ref.read(appliedVoucherProvider.notifier);
+    if (v == null) {
+      applied.clear();
+    } else {
+      applied.apply(v);
+    }
+    _back();
   }
 
   @override
   Widget build(BuildContext context) {
-    final selected = _vouchers.where((v) => v.id == _selectedId).firstOrNull;
+    ref.watch(cartProvider.select((c) => c.subtotal));
+    final selected = voucherById(_selectedId);
+    final shown = [for (final v in vouchers) if (v.listed || v.id == _selectedId) v];
     final hasCode = _code.text.trim().isNotEmpty;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(6),
@@ -152,12 +160,19 @@ class _VouchersScreenState extends State<VouchersScreen> {
                 const SizedBox(height: 28),
                 Semantics(header: true, child: Text('Tus cupones', style: CQType.title(20, height: 1.1))),
                 const SizedBox(height: 4),
-                for (final v in _vouchers)
+                for (final v in shown)
                   _VoucherRow(
                     voucher: v,
+                    missing: _missing(v),
                     selected: _selectedId == v.id,
-                    onTap: v.disabled ? null : () => setState(() => _selectedId = v.id),
+                    // Tocar el elegido lo desmarca.
+                    onTap: _missing(v) > 0 ? null : () => setState(() => _selectedId = _selectedId == v.id ? null : v.id),
                   ),
+                const SizedBox(height: 12),
+                Text(
+                  'Un descuento por pedido: el cupón reemplaza la bebida gratis del álbum.',
+                  style: CQType.body(13, color: CQColors.muted, height: 1.3),
+                ),
               ],
             ),
           ),
@@ -166,8 +181,8 @@ class _VouchersScreenState extends State<VouchersScreen> {
       bottomNavigationBar: BottomAction(
         child: CQButton(
           label: selected != null ? 'Usar cupón' : 'Seguir sin cupón',
-          trailing: selected?.amount,
-          onPressed: _back,
+          trailing: selected?.label,
+          onPressed: _confirm,
         ),
       ),
     );
@@ -175,15 +190,18 @@ class _VouchersScreenState extends State<VouchersScreen> {
 }
 
 class _VoucherRow extends StatelessWidget {
-  const _VoucherRow({required this.voucher, required this.selected, this.onTap});
+  const _VoucherRow({required this.voucher, required this.missing, required this.selected, this.onTap});
 
-  final _Voucher voucher;
+  final Voucher voucher;
+  final int missing;
   final bool selected;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final v = voucher;
+    final disabled = missing > 0;
+    final error = disabled ? 'Te faltan ${formatCOP(missing)} para usar este cupón.' : null;
     final row = Container(
       padding: const EdgeInsets.symmetric(vertical: 14),
       decoration: const BoxDecoration(
@@ -192,14 +210,14 @@ class _VoucherRow extends StatelessWidget {
       child: Row(
         children: [
           Opacity(
-            opacity: v.disabled ? 0.5 : 1,
+            opacity: disabled ? 0.5 : 1,
             child: Container(
               width: 92,
               height: 68,
               alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(color: CQColors.mostazaSoft, borderRadius: BorderRadius.circular(6)),
-              child: Text(v.amount, style: CQType.title(v.amount.length > 4 ? 19 : 30, height: 1)),
+              child: Text(v.label, style: CQType.title(v.label.length > 4 ? 19 : 30, height: 1)),
             ),
           ),
           const SizedBox(width: 14),
@@ -209,12 +227,12 @@ class _VoucherRow extends StatelessWidget {
               children: [
                 Text(
                   v.title,
-                  style: CQType.body(16, weight: FontWeight.w700, color: v.disabled ? CQColors.muted : CQColors.ink),
+                  style: CQType.body(16, weight: FontWeight.w700, color: disabled ? CQColors.muted : CQColors.ink),
                 ),
                 Text(v.subtitle, style: CQType.body(14, color: CQColors.muted, height: 1.25)),
-                if (v.error != null) ...[
+                if (error != null) ...[
                   const SizedBox(height: 2),
-                  Text(v.error!, style: CQType.body(14, color: CQColors.danger, height: 1.25)),
+                  Text(error, style: CQType.body(14, color: CQColors.danger, height: 1.25)),
                 ],
               ],
             ),
@@ -222,7 +240,7 @@ class _VoucherRow extends StatelessWidget {
           const SizedBox(width: 14),
           SizedBox(
             width: 24,
-            child: v.disabled
+            child: disabled
                 ? null
                 : AnimatedContainer(
                     duration: CQMotion.press,
@@ -242,7 +260,7 @@ class _VoucherRow extends StatelessWidget {
     return Semantics(
       inMutuallyExclusiveGroup: true,
       checked: selected,
-      enabled: !v.disabled,
+      enabled: !disabled,
       child: onTap == null ? row : Pressable(onTap: onTap, scale: 0.99, child: row),
     );
   }

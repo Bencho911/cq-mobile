@@ -34,7 +34,8 @@ const birds = [
   Bird('loro', 'Loro', 'assets/brand/ave-loro.webp', StampTone.rosaSoft),
   Bird('martin', 'Martín pescador', 'assets/brand/ave-martin.webp', StampTone.mostazaSoft),
   Bird('barranquero', 'Barranquero', 'assets/brand/ave-barranquero.webp', StampTone.mostaza),
-  Bird('carriqui', 'Carriquí', 'assets/brand/ave-carriqui.webp', StampTone.teal),
+  // El carriquí es teal como la estampilla teal: va sobre rosa para que se vea.
+  Bird('carriqui', 'Carriquí', 'assets/brand/ave-carriqui.webp', StampTone.rosa),
   Bird('colibri', 'Colibrí', 'assets/brand/ave-colibri-rosa.webp', StampTone.mostazaSoft),
   Bird('mirla', 'Mirla', 'assets/brand/ave-mirla.webp', StampTone.rosaSoft),
   Bird('azulejo', 'Azulejo', 'assets/brand/ave-azulejo.webp', StampTone.mostaza),
@@ -55,8 +56,6 @@ class LoyaltyAccount {
       LoyaltyAccount(points: (j['points'] as num).toInt(), completedCards: (j['completedCards'] as num).toInt());
 }
 
-/// MOCK: el backend aún no expone el saldo de puntos.
-const mockAccount = LoyaltyAccount(points: 47, completedCards: 2);
 
 /// MOCK: regla provisional (1 punto por cada $5.000) hasta que gerencia
 /// confirme la real; se usa para anticipar cuántos puntos sumará un pedido.
@@ -126,7 +125,107 @@ LoyaltySummary summarize(LoyaltyAccount account) {
   );
 }
 
-final loyaltyAccountProvider = Provider<LoyaltyAccount>((ref) => mockAccount);
+/// Movimiento de puntos ("Compra en Tienda Centro +12", "Bebida gratis canjeada").
+class LoyaltyMovement {
+  const LoyaltyMovement({required this.label, required this.points, required this.date});
+  final String label;
+  final int points;
+  final DateTime date;
+
+  Map<String, dynamic> toJson() => {'label': label, 'points': points, 'date': date.toIso8601String()};
+  factory LoyaltyMovement.fromJson(Map<String, dynamic> j) => LoyaltyMovement(
+      label: j['label'] as String? ?? '', points: (j['points'] as num?)?.toInt() ?? 0, date: DateTime.tryParse('${j['date']}') ?? DateTime.now());
+}
+
+/// Libreta de lealtad guardada en el teléfono (el backend aún no expone puntos).
+class LoyaltyBook {
+  const LoyaltyBook({this.account = const LoyaltyAccount(points: 0, completedCards: 0), this.movements = const [], this.freeDrinks = 0});
+
+  final LoyaltyAccount account;
+
+  /// Más reciente primero.
+  final List<LoyaltyMovement> movements;
+
+  /// Bebidas gratis ganadas y aún sin canjear.
+  final int freeDrinks;
+
+  Map<String, dynamic> toJson() =>
+      {'account': account.toJson(), 'movements': movements.map((e) => e.toJson()).toList(), 'freeDrinks': freeDrinks};
+
+  factory LoyaltyBook.fromJson(Map<String, dynamic> j) => LoyaltyBook(
+        account: LoyaltyAccount.fromJson(Map<String, dynamic>.from(j['account'] as Map)),
+        movements: ((j['movements'] as List?) ?? const []).map((e) => LoyaltyMovement.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
+        freeDrinks: (j['freeDrinks'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Resultado de sumar puntos, para avisar al cliente.
+class PointsResult {
+  const PointsResult({required this.earned, required this.newBirds, required this.cardsCompleted});
+  final int earned;
+  final List<Bird> newBirds;
+
+  /// Tarjetas que se completaron con esta suma (= bebidas gratis nuevas).
+  final int cardsCompleted;
+}
+
+class LoyaltyNotifier extends Notifier<LoyaltyBook> {
+  static const _key = 'cq.loyalty';
+
+  @override
+  LoyaltyBook build() {
+    final raw = ref.read(prefsProvider).getString(_key);
+    if (raw == null) return const LoyaltyBook();
+    try {
+      return LoyaltyBook.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return const LoyaltyBook();
+    }
+  }
+
+  void _set(LoyaltyBook b) {
+    state = b;
+    ref.read(prefsProvider).setString(_key, jsonEncode(b.toJson()));
+  }
+
+  /// Suma puntos de un pedido. Cada 50 puntos se completa la tarjeta: queda
+  /// una bebida gratis y la tarjeta siguiente arranca con el sobrante.
+  PointsResult addPoints(int points, String label) {
+    if (points <= 0) return const PointsResult(earned: 0, newBirds: [], cardsCompleted: 0);
+    final before = state.account;
+    final p = preview(before, points);
+    var total = before.points + points;
+    var cards = before.completedCards;
+    var completed = 0;
+    while (total >= pointsPerReward) {
+      total -= pointsPerReward;
+      cards++;
+      completed++;
+    }
+    _set(LoyaltyBook(
+      account: LoyaltyAccount(points: total, completedCards: cards),
+      movements: [LoyaltyMovement(label: label, points: points, date: DateTime.now()), ...state.movements].take(100).toList(),
+      freeDrinks: state.freeDrinks + completed,
+    ));
+    return PointsResult(earned: points, newBirds: p.newBirds, cardsCompleted: completed);
+  }
+
+  /// Canjea una bebida gratis (en el pago). Devuelve `false` si no hay.
+  bool redeemFreeDrink() {
+    if (state.freeDrinks <= 0) return false;
+    _set(LoyaltyBook(
+      account: state.account,
+      movements: [LoyaltyMovement(label: 'Bebida gratis canjeada', points: 0, date: DateTime.now()), ...state.movements],
+      freeDrinks: state.freeDrinks - 1,
+    ));
+    return true;
+  }
+}
+
+final loyaltyProvider = NotifierProvider<LoyaltyNotifier, LoyaltyBook>(LoyaltyNotifier.new);
+
+/// Saldo actual (atajo para las pantallas que solo necesitan los puntos).
+final loyaltyAccountProvider = Provider<LoyaltyAccount>((ref) => ref.watch(loyaltyProvider).account);
 
 /// Último saldo que el cliente vio en su álbum, para animar solo lo que
 /// cambió desde la visita anterior.

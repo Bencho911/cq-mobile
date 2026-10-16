@@ -6,7 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../widgets/shells.dart';
 import '../../widgets/zocalo.dart';
 
-/// Espera mientras se crea la cuenta; a los 3 s pasa a elegir el PIN.
+/// Espera breve al terminar el registro (el PIN ya quedó guardado y la
+/// sesión abierta); luego va al inicio.
 class AccountLoadingScreen extends StatefulWidget {
   const AccountLoadingScreen({super.key});
 
@@ -20,9 +21,9 @@ class _AccountLoadingScreenState extends State<AccountLoadingScreen> {
   @override
   void initState() {
     super.initState();
-    // Reemplaza la espera para que «volver» no la repita.
-    _timer = Timer(const Duration(seconds: 3), () {
-      if (mounted) context.pushReplacement('/create-pin');
+    // `go` limpia la pila: «volver» desde el inicio no regresa al registro.
+    _timer = Timer(const Duration(milliseconds: 2400), () {
+      if (mounted) context.go('/home');
     });
   }
 
@@ -37,6 +38,6 @@ class _AccountLoadingScreenState extends State<AccountLoadingScreen> {
         tone: FacadeTone.rosa,
         image: 'assets/brand/capibara-palmas.webp',
         title: 'Creando tu cuenta.',
-        description: 'Ya casi: falta elegir tu PIN.',
+        description: 'Ya casi: estamos abriendo tu álbum de aves.',
       );
 }

@@ -2,33 +2,52 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
+import '../../data/history.dart';
+import '../../state/orders.dart';
+import '../../state/preferences.dart';
 import '../../widgets/controls.dart';
 import 'common.dart';
 
 const _labels = ['Muy malo', 'Malo', 'Normal', 'Casi perfecto', 'Perfecto'];
 
-/// Calificar el pedido: 1–5 estrellas y reseña opcional.
-class RatingReviewScreen extends StatefulWidget {
-  const RatingReviewScreen({super.key});
+/// Calificar el pedido: 1–5 estrellas y reseña opcional. Sin [orderId]
+/// califica el último pedido completado.
+class RatingReviewScreen extends ConsumerStatefulWidget {
+  const RatingReviewScreen({super.key, this.orderId});
+
+  final int? orderId;
 
   @override
-  State<RatingReviewScreen> createState() => _RatingReviewScreenState();
+  ConsumerState<RatingReviewScreen> createState() => _RatingReviewScreenState();
 }
 
-class _RatingReviewScreenState extends State<RatingReviewScreen> {
+class _RatingReviewScreenState extends ConsumerState<RatingReviewScreen> {
   int _rating = 0;
   final _review = TextEditingController();
   final _focus = FocusNode();
+
+  /// Pedido que se califica (fijo al abrir la pantalla).
+  late final PastOrder? _order = _target();
+
+  PastOrder? _target() {
+    final notifier = ref.read(ordersProvider.notifier);
+    final byId = widget.orderId == null ? null : notifier.byId(widget.orderId!);
+    return byId ?? ref.read(orderHistoryProvider).where((o) => o.status == PastOrderStatus.completada).firstOrNull;
+  }
 
   @override
   void initState() {
     super.initState();
     _focus.addListener(() => setState(() {}));
+    // Si ya lo calificó, se puede corregir.
+    _rating = _order?.rating ?? 0;
+    _review.text = _order?.review ?? '';
   }
 
   @override
@@ -39,16 +58,32 @@ class _RatingReviewScreenState extends State<RatingReviewScreen> {
   }
 
   void _submit() {
-    // MOCK: el backend no expone endpoint de reseñas.
-    HapticFeedback.lightImpact();
-    showToast(context, 'Gracias por calificar tu pedido');
-    context.go('/home');
+    final order = _order;
+    if (order == null) return;
+    // Se guarda en el teléfono: el backend aún no expone reseñas.
+    ref.read(ordersProvider.notifier).rate(order.id, _rating, _review.text);
+    if (ref.read(preferencesProvider).haptics) HapticFeedback.lightImpact();
+    showToast(context, '¡Gracias!', detail: 'Guardamos tu calificación del pedido ${order.id}.');
+    _back();
   }
 
   void _back() => context.canPop() ? context.pop() : context.go('/home');
 
   @override
   Widget build(BuildContext context) {
+    if (_order == null) {
+      return Scaffold(
+        body: Column(children: [
+          PageHeader(title: 'Calificar', onBack: _back),
+          EmptyState(
+            image: 'assets/brand/ave-colibri-rosa.webp',
+            title: 'Aún no hay pedidos para calificar',
+            description: 'Cuando recojas tu primer pedido podrás contarnos cómo estuvo.',
+            action: CQButton(label: 'Ver el menú', expand: false, onPressed: () => context.go('/menu')),
+          ),
+        ]),
+      );
+    }
     return Scaffold(
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
@@ -63,7 +98,10 @@ class _RatingReviewScreenState extends State<RatingReviewScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Text('¿Cómo estuvo tu pedido?', style: CQType.title(36, height: 0.98)),
                 const SizedBox(height: 8),
-                Text('Tu opinión le llega a la barra de la tienda.', style: CQType.body(16, color: CQColors.muted)),
+                Text(
+                  'Pedido ${_order.id} · ${shortStore(_order.store)}. Tu opinión le llega a la barra de la tienda.',
+                  style: CQType.body(16, color: CQColors.muted),
+                ),
                 const SizedBox(height: 28),
                 Semantics(
                   label: 'Calificación',
@@ -76,7 +114,7 @@ class _RatingReviewScreenState extends State<RatingReviewScreen> {
                         excludeSemantics: true,
                         child: Pressable(
                           onTap: () {
-                            HapticFeedback.selectionClick();
+                            if (ref.read(preferencesProvider).haptics) HapticFeedback.selectionClick();
                             setState(() => _rating = i + 1);
                           },
                           child: SizedBox(width: 56, height: 56, child: Center(child: _Star(on: i < _rating))),
@@ -123,7 +161,7 @@ class _RatingReviewScreenState extends State<RatingReviewScreen> {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text('Tu reseña será visible para otros clientes.', style: CQType.body(13, color: CQColors.muted)),
+                Text('Tu calificación queda guardada en tu recibo.', style: CQType.body(13, color: CQColors.muted)),
               ]),
             ),
           ],

@@ -6,24 +6,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
+import '../../data/history.dart';
 import '../../state/loyalty.dart';
+import '../../state/preferences.dart';
+import '../../widgets/controls.dart';
 import '../../widgets/stamp.dart';
 
-// MOCK: beneficios e historial (el backend aún no expone el programa).
+// MOCK: beneficios del programa (el backend aún no los expone).
 const _benefits = [
   ('Bebida gratis', 'Cada $pointsPerReward puntos.'),
   ('Prioridad en tienda', 'Tus pedidos pasan primero en la barra.'),
   ('Regalo de cumpleaños', 'Un postre gratis en tu mes.'),
-];
-
-const _history = [
-  ('Compra en Tienda Centro', 12, 'Hoy, 2:15 p. m.'),
-  ('Bebida gratis canjeada', -50, '4 sep, 10:00 a. m.'),
-  ('Compra en Tienda Norte', 15, '28 ago, 4:30 p. m.'),
 ];
 
 const _stampHeight = 128.0;
@@ -38,10 +37,9 @@ class AlbumScreen extends ConsumerStatefulWidget {
 }
 
 class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProviderStateMixin {
-  late final LoyaltyAccount _account = ref.read(loyaltyAccountProvider);
-  late final LoyaltySummary _s = summarize(_account);
+  late LoyaltySummary _s;
   late final AnimationController _c = AnimationController(vsync: this);
-  late Animation<double> _progress = AlwaysStoppedAnimation(_s.points.toDouble());
+  Animation<double> _progress = const AlwaysStoppedAnimation(0);
 
   bool _started = false;
   bool _reduced = false;
@@ -53,21 +51,35 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _reduced = CQMotion.reduced(context);
     if (_started) return;
     _started = true;
+    _show(ref.read(loyaltyAccountProvider));
+  }
 
-    // Los puntos suben desde lo que se vio la última vez y cada ave nueva se
-    // sella justo cuando el contador cruza su decena.
-    _reduced = CQMotion.reduced(context);
+  /// Muestra el saldo: los puntos suben desde lo que se vio la última vez y
+  /// cada ave nueva se sella justo cuando el contador cruza su decena. La
+  /// pestaña sigue viva, así que se repite cuando entran puntos nuevos.
+  void _show(LoyaltyAccount account) {
+    _delay?.cancel();
+    _c.stop();
+    _progress.removeListener(_onProgress);
+    _s = summarize(account);
+
     final seen = ref.read(loyaltySeenProvider);
-    final from = _reduced ? _s.points : seen.pointsFrom(_account);
-    seen.write(_account);
+    final from = _reduced ? _s.points : seen.pointsFrom(account);
+    seen.write(account);
 
     _birdsAtStart = from ~/ pointsPerBird;
     _birdsShown = _birdsAtStart;
     final delta = _s.points - from;
-    if (delta <= 0) return;
+    if (delta <= 0) {
+      _birdsShown = _s.birdsEarned;
+      _progress = AlwaysStoppedAnimation(_s.points.toDouble());
+      return;
+    }
 
+    _c.value = 0;
     _progress = Tween(begin: from.toDouble(), end: _s.points.toDouble())
         .animate(CurvedAnimation(parent: _c, curve: CQMotion.easeOut))
       ..addListener(_onProgress);
@@ -81,8 +93,9 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
     final birds = math.min(_s.birdsEarned, _progress.value ~/ pointsPerBird);
     if (birds > _birdsShown) {
       setState(() => _birdsShown = birds);
-      _playStamp();
-      HapticFeedback.lightImpact();
+      final prefs = ref.read(preferencesProvider);
+      if (prefs.sounds) _playStamp();
+      if (prefs.haptics) HapticFeedback.lightImpact();
     }
   }
 
@@ -107,7 +120,12 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(loyaltyAccountProvider, (prev, next) {
+      if (prev?.points != next.points || prev?.completedCards != next.completedCards) setState(() => _show(next));
+    });
+    final book = ref.watch(loyaltyProvider);
     final s = _s;
+    final redeemed = math.max(0, s.completedCards - book.freeDrinks);
     final nextIndex = _birdsShown < birdsPerCard ? _birdsShown : -1;
     final top = math.max(MediaQuery.paddingOf(context).top, 20.0);
 
@@ -137,6 +155,10 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
             ]),
           ),
         ]),
+        if (book.freeDrinks > 0) ...[
+          const SizedBox(height: 16),
+          _FreeDrinks(count: book.freeDrinks),
+        ],
         const SizedBox(height: 16),
 
         // Un tramo por ave: 5 tramos de 10 puntos.
@@ -200,13 +222,14 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
             child: Text.rich(
               TextSpan(children: [
                 TextSpan(
-                  text: '${s.completedCards} ${s.completedCards == 1 ? 'tarjeta completa' : 'tarjetas completas'}. ',
+                  text: '${s.completedCards} ${s.completedCards == 1 ? 'tarjeta completa' : 'tarjetas completas'}.',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
-                TextSpan(
-                  text: '${s.completedCards} ${s.completedCards == 1 ? 'bebida canjeada' : 'bebidas canjeadas'}.',
-                  style: const TextStyle(color: CQColors.muted),
-                ),
+                if (redeemed > 0)
+                  TextSpan(
+                    text: ' $redeemed ${redeemed == 1 ? 'bebida canjeada' : 'bebidas canjeadas'}.',
+                    style: const TextStyle(color: CQColors.muted),
+                  ),
               ]),
               style: CQType.body(15),
             ),
@@ -217,15 +240,24 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
         const SizedBox(height: 28),
         Text('Movimientos de puntos', style: CQType.title(20, height: 1.1)),
         const SizedBox(height: 4),
-        for (final (action, points, date) in _history)
-          _Row(
-            title: Text(action, style: CQType.body(16)),
-            subtitle: Text(date, style: CQType.body(13, color: CQColors.muted)),
-            trailing: Text(
-              points > 0 ? '+$points' : '$points',
-              style: CQType.number(16, color: points > 0 ? CQColors.success : CQColors.ink).copyWith(fontWeight: FontWeight.w400),
+        if (book.movements.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'Aún no tienes movimientos. Cada compra suma puntos y aquí verás cuántos.',
+              style: CQType.body(15, color: CQColors.muted, height: 1.5),
             ),
-          ),
+          )
+        else
+          for (final m in book.movements.take(20))
+            _Row(
+              title: Text(m.label, style: CQType.body(16)),
+              subtitle: Text(formatOrderDate(m.date), style: CQType.body(13, color: CQColors.muted)),
+              trailing: Text(
+                m.points > 0 ? '+${m.points}' : (m.points == 0 ? 'Canje' : '${m.points}'),
+                style: CQType.number(16, color: m.points > 0 ? CQColors.success : CQColors.ink).copyWith(fontWeight: FontWeight.w400),
+              ),
+            ),
 
         // Beneficios
         const SizedBox(height: 28),
@@ -236,6 +268,38 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen> with SingleTickerProv
             title: Text(title, style: CQType.body(16, weight: FontWeight.w700)),
             subtitle: Text(desc, style: CQType.body(14, color: CQColors.muted)),
           ),
+      ]),
+    );
+  }
+}
+
+/// Bebidas gratis por canjear: destacadas en mostaza, con atajo al menú.
+class _FreeDrinks extends StatelessWidget {
+  const _FreeDrinks({required this.count});
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+      decoration: BoxDecoration(color: CQColors.mostaza, borderRadius: BorderRadius.circular(6)),
+      child: Row(children: [
+        const Icon(LucideIcons.gift, size: 26, color: CQColors.ink),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              count == 1 ? 'Tienes 1 bebida gratis' : 'Tienes $count bebidas gratis',
+              style: CQType.body(17, weight: FontWeight.w700),
+            ),
+            Text('Úsala en tu próximo pedido, al pagar.', style: CQType.body(14)),
+          ]),
+        ),
+        Pressable(
+          onTap: () => context.go('/menu'),
+          semanticLabel: 'Ir al menú',
+          child: const SizedBox(width: 44, height: 44, child: Icon(LucideIcons.chevronRight, size: 22, color: CQColors.ink)),
+        ),
       ]),
     );
   }

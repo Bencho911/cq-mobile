@@ -1,5 +1,6 @@
 package co.com.cafequindio.cafe_quindio
 
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 
-class MainActivity : FlutterActivity()
+// FlutterFragmentActivity: la necesita local_auth para mostrar el diálogo de huella.
+class MainActivity : FlutterFragmentActivity()

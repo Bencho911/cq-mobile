@@ -6,13 +6,13 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../core/format.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/typography.dart';
-import '../../data/models.dart';
-import '../../state/cart.dart';
-import '../../state/providers.dart';
+import '../../data/history.dart';
+import '../../state/orders.dart';
 import '../../widgets/controls.dart';
 import 'common.dart';
+import 'receipt_pdf.dart';
 
-/// Detalle de un pedido recién hecho (o del carrito, en la demo).
+/// Detalle de un pedido guardado en el teléfono.
 class OrderDetailsScreen extends ConsumerStatefulWidget {
   const OrderDetailsScreen({super.key, this.orderId});
 
@@ -22,49 +22,29 @@ class OrderDetailsScreen extends ConsumerStatefulWidget {
   ConsumerState<OrderDetailsScreen> createState() => _OrderDetailsScreenState();
 }
 
-(String, BadgeTone) _statusBadge(String? estado) => switch (estado) {
-      'completada' => ('Entregado', BadgeTone.neutral),
-      'cancelada' => ('Cancelado', BadgeTone.danger),
-      'reembolsada' => ('Reembolsado', BadgeTone.danger),
-      _ => ('Preparando', BadgeTone.accent),
-    };
-
 class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
-  Order? _order;
-
-  @override
-  void initState() {
-    super.initState();
-    final id = widget.orderId;
-    if (id == null) return;
-    ref.read(orderServiceProvider).getOrderById(id).then((o) {
-      if (mounted) setState(() => _order = o);
-    }, onError: (_) {
-      if (mounted) setState(() => _order = null);
-    });
-  }
+  bool _pdfBusy = false;
 
   void _back() => context.canPop() ? context.pop() : context.go('/home');
 
+  Future<void> _pdf(PastOrder order) async {
+    if (_pdfBusy) return;
+    setState(() => _pdfBusy = true);
+    try {
+      await openReceiptPdf(order);
+    } catch (_) {
+      if (mounted) showToast(context, 'No pudimos generar el comprobante.', detail: 'Inténtalo de nuevo en un momento.', error: true);
+    } finally {
+      if (mounted) setState(() => _pdfBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cart = ref.watch(cartProvider);
-    final store = ref.watch(selectedStoreProvider);
-    final order = _order;
+    final id = widget.orderId;
+    final order = id == null ? null : ref.watch(ordersProvider).where((o) => o.id == id).firstOrNull;
 
-    // Fallback con el carrito si no hay orden (demo).
-    final fallback = [
-      for (final i in cart.items)
-        OrderLine(codProd: i.product.codProd, quantity: i.quantity, unitPrice: i.unitPrice, name: i.product.name, imageUrl: i.product.imageUrl),
-    ];
-    final lines = order != null && order.items.isNotEmpty ? order.items : fallback;
-    final total = (order?.total ?? 0) > 0 ? order!.total : lines.fold(0, (s, l) => s + l.quantity * l.unitPrice);
-    final count = lines.fold(0, (s, l) => s + l.quantity);
-    final (statusLabel, statusTone) = _statusBadge(order?.status);
-    final payment = order?.paymentMethod == null ? 'Pago en kiosco' : paymentLabels[order!.paymentMethod] ?? order.paymentMethod!;
-    final delivery = order?.deliveryType == 'domicilio';
-
-    if (widget.orderId == null && lines.isEmpty) {
+    if (order == null) {
       return Scaffold(
         body: Column(children: [
           PageHeader(title: 'Detalle del pedido', onBack: _back),
@@ -78,6 +58,10 @@ class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
       );
     }
 
+    final count = order.items.fold(0, (s, l) => s + l.quantity);
+    final (statusLabel, statusTone) = statusBadgeFor(order.status);
+    final delivery = order.deliveryType == 'Domicilio';
+
     return Scaffold(
       body: ListView(padding: EdgeInsets.zero, children: [
         PageHeader(title: 'Detalle del pedido', onBack: _back),
@@ -89,30 +73,24 @@ class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
                 child: Text.rich(
                   TextSpan(children: [
                     const TextSpan(text: 'Pedido '),
-                    TextSpan(text: '${order?.id ?? widget.orderId ?? '—'}', style: CQType.number(30, height: 1)),
+                    TextSpan(text: '${order.id}', style: CQType.number(30, height: 1)),
                   ]),
                   style: CQType.title(30, height: 1),
                 ),
               ),
-              // Sin datos del backend no se inventa un estado.
-              AnimatedOpacity(
-                opacity: order != null ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: CQBadge(statusLabel, tone: statusTone),
-              ),
+              CQBadge(statusLabel, tone: statusTone),
             ]),
-            if (order?.date != null) ...[
-              const SizedBox(height: 6),
-              Text(formatLongDate(order!.date!), style: CQType.body(15, color: CQColors.muted)),
-            ],
+            const SizedBox(height: 6),
+            Text(formatLongDate(order.createdAt), style: CQType.body(15, color: CQColors.muted)),
             const SizedBox(height: 16),
-            InfoRow(label: 'Entrega', child: _value(delivery ? 'Domicilio' : 'Recoger en tienda')),
-            if (!delivery && store != null) InfoRow(label: 'Tienda', child: _value('Tienda ${store.shortName}')),
-            InfoRow(label: 'Método de pago', child: _value(payment)),
+            InfoRow(label: 'Entrega', child: _value(order.deliveryType ?? 'Recoger en tienda')),
+            if (!delivery && order.store.isNotEmpty) InfoRow(label: 'Tienda', child: _value(shortStore(order.store))),
+            if (order.pickupTime != null) InfoRow(label: 'Hora', child: _value(formatClock(order.pickupTime!))),
+            InfoRow(label: 'Método de pago', child: _value(order.paymentMethod)),
             const SizedBox(height: 24),
             Text('Productos', style: CQType.title(20, height: 1.1)),
             const SizedBox(height: 4),
-            if (lines.isEmpty)
+            if (order.items.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -120,7 +98,15 @@ class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
                 child: Text('No encontramos los productos de este pedido.', style: CQType.body(15, color: CQColors.muted)),
               )
             else
-              for (final l in lines) _LineRow(line: l),
+              for (final l in order.items) _LineRow(line: l),
+            if (order.discount > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(children: [
+                  Expanded(child: Text('Descuento', style: CQType.body(15, color: CQColors.muted))),
+                  Text('−${formatCOP(order.discount)}', style: CQType.number(15, color: CQColors.success).copyWith(fontWeight: FontWeight.w400)),
+                ]),
+              ),
             Padding(
               padding: const EdgeInsets.only(top: 16),
               child: Row(children: [
@@ -131,35 +117,34 @@ class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
                     TextSpan(text: ' ${count == 1 ? 'producto' : 'productos'})'),
                   ]), style: CQType.body(16)),
                 ),
-                Text(formatCOP(total), style: CQType.number(22)),
+                Text(formatCOP(order.total), style: CQType.number(22)),
               ]),
             ),
-            if (widget.orderId != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: Pressable(
-                  onTap: () => context.push('/invoice/${widget.orderId}'),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 44),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: 1,
-                      child: Text('Ver recibo',
-                          style: CQType.body(15, weight: FontWeight.w600)
-                              .copyWith(decoration: TextDecoration.underline, decorationColor: CQColors.ink)),
-                    ),
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Pressable(
+                onTap: () => context.push('/invoice/${order.id}', extra: order),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 44),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: 1,
+                    child: Text('Ver recibo',
+                        style: CQType.body(15, weight: FontWeight.w600)
+                            .copyWith(decoration: TextDecoration.underline, decorationColor: CQColors.ink)),
                   ),
                 ),
               ),
+            ),
           ]),
         ),
       ]),
       bottomNavigationBar: BottomActionBar(
         child: CQButton(
-          label: 'Descargar comprobante',
+          label: 'Descargar recibo',
           icon: LucideIcons.download,
-          // MOCK: la web imprime la página; la app aún no genera el PDF.
-          onPressed: () => showToast(context, 'Muy pronto podrás descargar el comprobante.'),
+          loading: _pdfBusy,
+          onPressed: () => _pdf(order),
         ),
       ),
     );
@@ -170,7 +155,7 @@ class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
 
 class _LineRow extends StatelessWidget {
   const _LineRow({required this.line});
-  final OrderLine line;
+  final PastOrderItem line;
 
   @override
   Widget build(BuildContext context) {
@@ -189,7 +174,8 @@ class _LineRow extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(line.name ?? 'Producto ${line.codProd}', style: CQType.body(16)),
+            Text(line.name, style: CQType.body(16)),
+            if (itemDetail(line).isNotEmpty) Text(itemDetail(line), style: CQType.body(14, color: CQColors.muted)),
             Text('${line.quantity} × ${formatCOP(line.unitPrice)}', style: CQType.number(14, color: CQColors.muted).copyWith(fontWeight: FontWeight.w400)),
           ]),
         ),

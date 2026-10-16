@@ -18,11 +18,12 @@ Future<void> showOrderReady(
   BuildContext context, {
   int? orderId,
   String? storeName,
-  int total = 0,
+  int earned = 0,
+  bool haptics = true,
   VoidCallback? onPickedUp,
   VoidCallback? onReceipt,
 }) {
-  HapticFeedback.mediumImpact();
+  if (haptics) HapticFeedback.mediumImpact();
   return showGeneralDialog<void>(
     context: context,
     barrierDismissible: false,
@@ -31,16 +32,18 @@ Future<void> showOrderReady(
     transitionDuration: CQMotion.fast,
     transitionBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
     pageBuilder: (context, _, _) =>
-        _OrderReady(orderId: orderId, storeName: storeName, total: total, onPickedUp: onPickedUp, onReceipt: onReceipt),
+        _OrderReady(orderId: orderId, storeName: storeName, earned: earned, onPickedUp: onPickedUp, onReceipt: onReceipt),
   );
 }
 
 class _OrderReady extends ConsumerStatefulWidget {
-  const _OrderReady({this.orderId, this.storeName, this.total = 0, this.onPickedUp, this.onReceipt});
+  const _OrderReady({this.orderId, this.storeName, this.earned = 0, this.onPickedUp, this.onReceipt});
 
   final int? orderId;
   final String? storeName;
-  final int total;
+
+  /// Puntos que ya sumó el pedido (se suman al pagar).
+  final int earned;
   final VoidCallback? onPickedUp;
   final VoidCallback? onReceipt;
 
@@ -83,10 +86,12 @@ class _OrderReadyState extends ConsumerState<_OrderReady> with SingleTickerProvi
   @override
   Widget build(BuildContext context) {
     final pad = MediaQuery.paddingOf(context);
-    final account = ref.watch(loyaltyAccountProvider);
-    final earned = estimatePoints(widget.total);
-    final reward = preview(account, earned);
-    final bird = reward.newBirds.lastOrNull ?? summarize(account).nextBird;
+    final earned = widget.earned;
+    final book = ref.watch(loyaltyProvider);
+    final summary = summarize(book.account);
+    // Sello: la última ave ganada de la tarjeta o, si no hay, la siguiente.
+    final lastEarned = summary.slots.where((s) => s.earned).lastOrNull?.bird;
+    final bird = lastEarned ?? summary.nextBird;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
@@ -158,7 +163,10 @@ class _OrderReadyState extends ConsumerState<_OrderReady> with SingleTickerProvi
                   decoration: BoxDecoration(color: CQColors.white, borderRadius: BorderRadius.circular(6)),
                   child: Row(
                     children: [
-                      SizedBox(width: 64, child: Stamp(bird: bird, height: 78)),
+                      SizedBox(
+                        width: 64,
+                        child: Stamp(bird: bird, state: lastEarned != null ? StampState.earned : StampState.next, height: 78),
+                      ),
                       const SizedBox(width: 14),
                       Expanded(
                         child: Column(
@@ -169,14 +177,14 @@ class _OrderReadyState extends ConsumerState<_OrderReady> with SingleTickerProvi
                                 children: [
                                   const TextSpan(text: '+'),
                                   TextSpan(text: '$earned', style: CQType.number(17)),
-                                  TextSpan(text: ' puntos${reward.completesCard ? ' y tarjeta completa' : ''}'),
+                                  TextSpan(text: earned == 1 ? ' punto con este pedido' : ' puntos con este pedido'),
                                 ],
                               ),
                               style: CQType.body(17, weight: FontWeight.w700),
                             ),
                             Text(
-                              '${reward.newBirds.isNotEmpty ? 'Ganaste al ${bird.name}' : 'Llevas ${reward.total} puntos'}'
-                              '${reward.completesCard ? ' y una bebida gratis' : ''}',
+                              'Llevas ${book.account.points} de $pointsPerReward puntos'
+                              '${book.freeDrinks > 0 ? ' y ${book.freeDrinks == 1 ? 'una bebida gratis' : '${book.freeDrinks} bebidas gratis'}' : ''}.',
                               style: CQType.body(14, color: CQColors.muted),
                             ),
                           ],

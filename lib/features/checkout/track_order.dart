@@ -11,11 +11,13 @@ import '../../core/theme/colors.dart';
 import '../../core/theme/motion.dart';
 import '../../core/theme/typography.dart';
 import '../../data/mock_data.dart';
-import '../../data/models.dart';
-import '../../state/cart.dart';
+import '../../data/history.dart';
+import '../../state/orders.dart';
+import '../../state/preferences.dart';
 import '../../state/providers.dart';
 import '../../widgets/controls.dart';
 import 'common.dart';
+import 'discounts.dart';
 import 'order_ready.dart';
 
 const _steps = [
@@ -24,7 +26,21 @@ const _steps = [
   (label: 'Listo', title: 'Tu pedido está listo', desc: 'Recógelo en la barra.'),
 ];
 
-/// Seguimiento del pedido. Paso: 1 = tomado, 2 = preparando, 3 = listo.
+/// Paso de la barra (1..3) para cada estado.
+int _stepFor(PastOrderStatus s) => switch (s) {
+  PastOrderStatus.pendiente => 1,
+  PastOrderStatus.preparando => 2,
+  _ => 3,
+};
+
+/// Orden de avance, para no retroceder nunca un estado.
+int _rank(PastOrderStatus s) => PastOrderStatus.values.indexOf(s);
+
+// MOCK: tiempos del avance simulado desde que se creó el pedido.
+const _toPreparing = Duration(seconds: 3);
+const _toReady = Duration(seconds: 6);
+
+/// Seguimiento del pedido guardado en el teléfono (ordersProvider).
 class TrackOrderScreen extends ConsumerStatefulWidget {
   const TrackOrderScreen({super.key, this.orderId});
 
@@ -35,32 +51,46 @@ class TrackOrderScreen extends ConsumerStatefulWidget {
 }
 
 class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
-  int _step = 1;
-  int _orderTotal = 0;
-  List<OrderLine> _orderLines = const [];
   final _timers = <Timer>[];
+
+  OrdersNotifier get _orders => ref.read(ordersProvider.notifier);
 
   @override
   void initState() {
     super.initState();
     final id = widget.orderId;
-    if (id != null) _load(id);
+    final order = id == null ? null : _orders.byId(id);
+    if (id == null || order == null || !order.status.isActive) return;
 
     if (AppConfig.useMocks) {
-      // MOCK: avance simulado (el backend no emite "preparando").
-      _timers
-        ..add(Timer(const Duration(seconds: 3), () => _setStep(2)))
-        ..add(
-          Timer(const Duration(seconds: 6), () {
-            _setStep(3);
-            _showReady();
-          }),
-        );
-    } else if (id != null) {
+      // MOCK: el backend no emite "preparando". Se retoma según el tiempo
+      // que pasó desde que se creó el pedido, sin retroceder lo ya avanzado.
+      final elapsed = DateTime.now().difference(order.createdAt);
+      if (elapsed < _toPreparing) {
+        _timers.add(Timer(_toPreparing - elapsed, () => _advance(id, PastOrderStatus.preparando)));
+      }
+      if (elapsed < _toReady) {
+        _timers.add(Timer(_toReady - elapsed, () => _advance(id, PastOrderStatus.listo)));
+      }
+      // Lo ya vencido se guarda tras el primer cuadro (no durante la construcción).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (elapsed >= _toReady) {
+          _advance(id, PastOrderStatus.listo);
+        } else if (elapsed >= _toPreparing) {
+          _advance(id, PastOrderStatus.preparando);
+        }
+      });
+    } else {
       // Real: sondeo del estado de la orden.
       _poll(id);
       _timers.add(Timer.periodic(const Duration(milliseconds: 2500), (_) => _poll(id)));
     }
+
+    // Si ya estaba listo al abrir, el aviso sale una vez (si no se vio antes).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_orders.byId(id)?.status == PastOrderStatus.listo) _showReady();
+    });
   }
 
   @override
@@ -71,72 +101,88 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
     super.dispose();
   }
 
-  Future<void> _load(int id) async {
-    try {
-      final o = await ref.read(orderServiceProvider).getOrderById(id);
-      if (mounted) {
-        setState(() {
-          _orderTotal = o.total;
-          _orderLines = o.items;
-        });
-      }
-    } catch (_) {}
+  /// Avanza el estado guardado solo si es un paso adelante.
+  void _advance(int id, PastOrderStatus next) {
+    final o = _orders.byId(id);
+    if (o == null || _rank(next) <= _rank(o.status)) return;
+    _orders.setStatus(id, next);
   }
 
   Future<void> _poll(int id) async {
     try {
       final order = await ref.read(orderServiceProvider).getOrderById(id);
-      _setStep(order.status == 'completada' ? 3 : 1);
+      if (mounted && order.status == 'completada') _advance(id, PastOrderStatus.listo);
     } catch (_) {
       // Mantener el estado.
     }
   }
 
-  void _setStep(int step) {
-    if (mounted && step != _step) setState(() => _step = step);
+  void _pickedUp() {
+    final id = widget.orderId;
+    if (id != null) _orders.setStatus(id, PastOrderStatus.completada);
+    if (mounted) context.go('/orders');
   }
 
   void _showReady() {
-    if (!mounted) return;
-    final store = ref.read(selectedStoreProvider);
     final id = widget.orderId;
+    if (!mounted || id == null) return;
+    final shown = ref.read(readyShownProvider);
+    if (shown.contains(id)) return;
+    shown.add(id);
+    final order = _orders.byId(id);
     showOrderReady(
       context,
       orderId: id,
-      storeName: store?.shortName,
-      total: _orderTotal,
-      onPickedUp: () => context.push('/rating-review'),
-      onReceipt: id != null ? () => context.push('/invoice/$id') : null,
+      storeName: order == null ? null : _shortStore(order.store),
+      earned: order?.earnedPoints ?? 0,
+      haptics: ref.read(preferencesProvider).haptics,
+      onPickedUp: _pickedUp,
+      onReceipt: () => context.push('/invoice/$id', extra: _orders.byId(id)),
     );
   }
 
+  void _back() => context.canPop() ? context.pop() : context.go('/home');
+
   @override
   Widget build(BuildContext context) {
-    final store = ref.watch(selectedStoreProvider);
-    final cartItems = ref.watch(cartProvider.select((c) => c.items));
-    final reduced = CQMotion.reduced(context);
-    final current = _steps[_step - 1];
+    final id = widget.orderId;
+    final order = ref.watch(ordersProvider.select((list) => list.where((o) => o.id == id).firstOrNull));
 
-    // El carrito se vacía al pagar: las líneas salen de la orden y, si no hay, del carrito.
-    final lines = _orderLines.isNotEmpty
-        ? _orderLines
-        : [
-            for (final i in cartItems)
-              OrderLine(
-                codProd: i.product.codProd,
-                quantity: i.quantity,
-                unitPrice: i.unitPrice,
-                name: i.product.name,
-                imageUrl: i.product.imageUrl,
-              ),
-          ];
+    // Aviso de listo cuando el estado cambia mientras se mira la pantalla.
+    ref.listen(ordersProvider.select((list) => list.where((o) => o.id == id).firstOrNull?.status), (prev, next) {
+      if (next == PastOrderStatus.listo && prev != next) _showReady();
+    });
+
+    if (order == null) {
+      return Scaffold(
+        backgroundColor: CQColors.white,
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            PageHeader(title: 'Tu pedido', onBack: _back),
+            _NotFound(onOrders: () => context.go('/orders')),
+          ],
+        ),
+      );
+    }
+
+    final reduced = CQMotion.reduced(context);
+    final done = order.status == PastOrderStatus.completada;
+    final cancelled = order.status == PastOrderStatus.cancelada;
+    final step = _stepFor(order.status);
+    final current = done
+        ? (label: 'Entregado', title: 'Ya recogiste tu pedido', desc: '¡Que lo disfrutes!')
+        : cancelled
+        ? (label: 'Cancelado', title: 'Pedido cancelado', desc: 'Este pedido no se va a preparar.')
+        : _steps[step - 1];
+    final domicilio = order.deliveryType == 'Domicilio';
 
     return Scaffold(
       backgroundColor: CQColors.white,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHeader(title: 'Tu pedido', onBack: () => context.canPop() ? context.pop() : context.go('/home')),
+          PageHeader(title: 'Tu pedido', onBack: _back),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -147,16 +193,15 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (widget.orderId != null)
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              const TextSpan(text: 'Pedido '),
-                              TextSpan(text: '${widget.orderId}', style: CQType.number(15)),
-                            ],
-                          ),
-                          style: CQType.body(15, color: CQColors.muted),
+                      Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(text: 'Pedido '),
+                            TextSpan(text: '${order.id}', style: CQType.number(15)),
+                          ],
                         ),
+                        style: CQType.body(15, color: CQColors.muted),
+                      ),
                       // El estado nuevo entra con un fundido corto; el anterior sale sin esperar.
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 250),
@@ -178,7 +223,7 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
                           );
                         },
                         child: Column(
-                          key: ValueKey(_step),
+                          key: ValueKey(order.status),
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const SizedBox(height: 4),
@@ -196,8 +241,10 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
-                _Progress(step: _step, label: current.label, reduced: reduced),
+                if (!cancelled) ...[
+                  const SizedBox(height: 20),
+                  _Progress(step: step, label: current.label, reduced: reduced),
+                ],
 
                 // Tienda
                 const SizedBox(height: 24),
@@ -216,13 +263,12 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Recoges en', style: CQType.body(14, color: CQColors.muted)),
-                            Text(
-                              store != null ? 'Tienda ${store.shortName}' : 'Tu tienda',
-                              style: CQType.body(16, weight: FontWeight.w700),
-                            ),
-                            if (store != null && store.address.isNotEmpty)
-                              Text(store.address, style: CQType.body(14, color: CQColors.muted, height: 1.25)),
+                            Text(domicilio ? 'Prepara la tienda' : 'Recoges en', style: CQType.body(14, color: CQColors.muted)),
+                            Text('Tienda ${_shortStore(order.store)}', style: CQType.body(16, weight: FontWeight.w700)),
+                            if (order.address != null && order.address!.isNotEmpty)
+                              Text(order.address!, style: CQType.body(14, color: CQColors.muted, height: 1.25)),
+                            if (order.pickupTime != null)
+                              Text('A las ${formatClock(order.pickupTime!)}', style: CQType.body(14, color: CQColors.muted)),
                           ],
                         ),
                       ),
@@ -233,23 +279,16 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
                 // Productos
                 const SizedBox(height: 24),
                 Semantics(header: true, child: Text('Lo que pediste', style: CQType.title(20, height: 1.1))),
-                if (lines.isEmpty)
-                  Container(
-                    padding: const EdgeInsets.only(top: 8, bottom: 16),
-                    decoration: const BoxDecoration(
-                      border: Border(bottom: BorderSide(color: CQColors.line)),
-                    ),
-                    child: Text('Tu pedido ya está en la barra.', style: CQType.body(15, color: CQColors.muted)),
-                  )
-                else ...[
-                  const SizedBox(height: 4),
-                  for (final line in lines) _Line(line: line),
-                ],
-                if (_step >= 3)
+                const SizedBox(height: 4),
+                for (final item in order.items) _Line(item: item),
+                if (order.discount > 0)
+                  _TotalRow(label: 'Descuento', value: '−${formatCOP(order.discount)}', color: CQColors.success),
+                _TotalRow(label: 'Total', value: formatCOP(order.total), strong: true),
+                if (step >= 3 && !cancelled)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Pressable(
-                      onTap: () => context.push('/rating-review'),
+                      onTap: () => context.push('/rating-review', extra: widget.orderId),
                       child: Container(
                         constraints: const BoxConstraints(minHeight: 44),
                         margin: const EdgeInsets.only(top: 8),
@@ -267,13 +306,75 @@ class _TrackOrderScreenState extends ConsumerState<TrackOrderScreen> {
         ],
       ),
       bottomNavigationBar: BottomAction(
-        child: CQButton(
-          label: 'Detalle del pedido',
-          onPressed: () => context.push('/order-details', extra: widget.orderId),
-        ),
+        child: order.status == PastOrderStatus.listo
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CQButton(label: 'Ya lo recogí', onPressed: _pickedUp),
+                  Pressable(
+                    onTap: () => context.push('/order-details', extra: order.id),
+                    child: SizedBox(
+                      height: 44,
+                      width: double.infinity,
+                      child: Center(child: Text('Detalle del pedido', style: CQType.body(15, weight: FontWeight.w600))),
+                    ),
+                  ),
+                ],
+              )
+            : CQButton(
+                label: 'Detalle del pedido',
+                onPressed: () => context.push('/order-details', extra: order.id),
+              ),
       ),
     );
   }
+}
+
+/// "Café Quindío · Centro" → "Centro".
+String _shortStore(String name) => name.replaceFirst(RegExp(r'^Café Quindío\s*[·-]\s*', caseSensitive: false), '');
+
+class _NotFound extends StatelessWidget {
+  const _NotFound({required this.onOrders});
+  final VoidCallback onOrders;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 56),
+    child: Column(
+      children: [
+        const Icon(LucideIcons.receipt, size: 36, color: CQColors.muted),
+        const SizedBox(height: 12),
+        Text('No encontramos este pedido', textAlign: TextAlign.center, style: CQType.title(22, height: 1.1)),
+        const SizedBox(height: 12),
+        Text(
+          'Puede que se haya borrado de este teléfono. Tus pedidos guardados están en «Pedidos».',
+          textAlign: TextAlign.center,
+          style: CQType.body(15, color: CQColors.muted, height: 1.6),
+        ),
+        const SizedBox(height: 16),
+        CQButton(label: 'Ver mis pedidos', onPressed: onOrders, expand: false),
+      ],
+    ),
+  );
+}
+
+class _TotalRow extends StatelessWidget {
+  const _TotalRow({required this.label, required this.value, this.color = CQColors.ink, this.strong = false});
+  final String label;
+  final String value;
+  final Color color;
+  final bool strong;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: Row(
+      children: [
+        Expanded(child: Text(label, style: CQType.body(strong ? 16 : 15, weight: strong ? FontWeight.w700 : FontWeight.w400))),
+        Text(value, style: CQType.number(strong ? 17 : 15, color: color)),
+      ],
+    ),
+  );
 }
 
 /// Barra de tres tramos: el tramo nuevo se llena de izquierda a derecha.
@@ -342,48 +443,49 @@ class _Progress extends StatelessWidget {
 }
 
 class _Line extends StatelessWidget {
-  const _Line({required this.line});
-  final OrderLine line;
+  const _Line({required this.item});
+  final PastOrderItem item;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(vertical: 12),
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: CQColors.line)),
-    ),
-    child: Row(
-      children: [
-        Container(
-          width: 56,
-          height: 56,
-          alignment: Alignment.center,
-          decoration: const BoxDecoration(color: CQColors.creamMid, shape: BoxShape.circle),
-          child: ProductImage(line.imageUrl, width: 46, height: 46),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(line.name ?? 'Producto ${line.codProd}', style: CQType.body(16, weight: FontWeight.w700)),
-              Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: '${line.quantity}',
-                      style: CQType.number(14, color: CQColors.muted),
-                    ),
-                    TextSpan(text: line.quantity == 1 ? ' unidad' : ' unidades'),
-                  ],
-                ),
-                style: CQType.body(14, color: CQColors.muted),
-              ),
-            ],
+  Widget build(BuildContext context) {
+    final detail = itemDetail(item);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: CQColors.line)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(color: CQColors.creamMid, shape: BoxShape.circle),
+            child: ProductImage(item.imageUrl, width: 46, height: 46),
           ),
-        ),
-        const SizedBox(width: 12),
-        Text(formatCOP(line.quantity * line.unitPrice), style: CQType.number(16)),
-      ],
-    ),
-  );
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.name, style: CQType.body(16, weight: FontWeight.w700)),
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: '${item.quantity}', style: CQType.number(14, color: CQColors.muted)),
+                      TextSpan(text: item.quantity == 1 ? ' unidad' : ' unidades'),
+                      if (detail.isNotEmpty) TextSpan(text: ' · $detail'),
+                    ],
+                  ),
+                  style: CQType.body(14, color: CQColors.muted, height: 1.25),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(formatCOP(item.quantity * item.unitPrice), style: CQType.number(16)),
+        ],
+      ),
+    );
+  }
 }
