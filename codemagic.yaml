@@ -1,0 +1,65 @@
+# Compilación en Codemagic (https://codemagic.io).
+# Pasos para configurarlo la primera vez: ver "Probar en iPhone" en el README.
+
+workflows:
+  # iPhone: firma, compila y envía a TestFlight para instalar en el teléfono.
+  ios-testflight:
+    name: iOS · TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      # Nombre con el que se guardó la llave del API de App Store Connect en Codemagic.
+      app_store_connect: cq-app-store-connect
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: co.com.cafequindio.app
+      vars:
+        # Apple ID numérico de la app (App Store Connect → Información de la app).
+        APP_STORE_APPLE_ID: "0000000000"
+    scripts:
+      - name: Dependencias
+        script: flutter pub get
+      - name: Análisis y pruebas
+        script: |
+          flutter analyze
+          flutter test
+      - name: Perfiles de firma
+        script: xcode-project use-profiles
+      - name: Compilar el .ipa
+        # `flutter build ipa` instala las dependencias nativas (Pods/SwiftPM) por su cuenta.
+        script: |
+          # Cada envío a TestFlight necesita un número de compilación mayor al anterior.
+          LAST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" || echo 0)
+          flutter build ipa --release \
+            --build-number=$((LAST + 1)) \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+
+  # Android: APK de prueba (firmado con la llave de depuración) para instalar a mano.
+  android-apk:
+    name: Android · APK de prueba
+    max_build_duration: 30
+    instance_type: linux_x2
+    environment:
+      flutter: stable
+    scripts:
+      - name: Dependencias
+        script: flutter pub get
+      - name: Análisis y pruebas
+        script: |
+          flutter analyze
+          flutter test
+      - name: Compilar el APK
+        script: flutter build apk --release --build-number=$BUILD_NUMBER
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
